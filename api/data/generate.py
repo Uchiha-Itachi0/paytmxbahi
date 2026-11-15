@@ -31,6 +31,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
+from bahi.domain import wording
 from bahi.domain.wording import acknowledgment
 from data import db, names_hi
 from data.personas import CAST, CROWD, Open, Persona
@@ -82,6 +83,7 @@ class Builder:
         self.rng = rng
         self.plan = Plan()
         self._n: dict[str, int] = {}
+        self._threads: dict[uuid.UUID, int] = {}
 
     def _next(self, key: str) -> int:
         self._n[key] = self._n.get(key, 0) + 1
@@ -160,6 +162,47 @@ class Builder:
             RepaymentRow(uid("pay", str(eid)), eid, paise, method, paid_at=when)
         )
 
+    def say(
+        self,
+        shop: str,
+        who: str,
+        cid: uuid.UUID,
+        author: str,
+        kind: str,
+        body: str,
+        when: datetime,
+        entry: uuid.UUID | None = None,
+    ) -> None:
+        """One message in his thread with the shop; the thread is made on the first."""
+        tid = uid("thread", shop, who)
+        if tid not in self._threads:
+            self._threads[tid] = len(self.plan.threads)
+            self.plan.threads.append(ThreadRow(tid, cid, created_at=when))
+        n = self._next(f"message:{tid}") - 1
+        self.plan.messages.append(
+            MessageRow(
+                id=uid("message", str(tid), str(n)),
+                thread_id=tid,
+                author=author,
+                kind=kind,
+                body=body,
+                sent_at=when,
+                entry_id=entry,
+                read_for_memory_at=when,
+            )
+        )
+
+    def all_read(self) -> None:
+        """Both sides have read every seeded thread: the demo starts with an
+        empty inbox badge, and what arrives live is what shows as new."""
+        last: dict[uuid.UUID, datetime] = {}
+        for m in self.plan.messages:
+            last[m.thread_id] = max(m.sent_at, last.get(m.thread_id, m.sent_at))
+        self.plan.threads = [
+            replace(t, shop_read_at=last[t.id], customer_read_at=last[t.id])
+            for t in self.plan.threads
+        ]
+
 
 # ── one customer's history ───────────────────────────────────────────────────
 
@@ -186,12 +229,14 @@ def history(b: Builder, shop: str, p: Persona, cid: uuid.UUID, linked: bool) -> 
     prev = p.since or before
     disputed = False
 
+    name = SHOPS[shop][0]
     for pay_day in pays:
         span = (pay_day - prev).days
         k = max(1, min(4, round(span / spacing), span))
         offsets = sorted(rng.sample(range(1, span + 1), k))
         method = "upi" if rng.random() < p.upi else "cash"
-        paid_at = at(pay_day, 20, rng.randrange(0, 60, 5))
+        paid_at = at(pay_day, p.pays_at, rng.randrange(0, 60, 5))
+        paid_today: list[tuple[uuid.UUID, int]] = []
 
         for off in offsets:
             day = prev + timedelta(days=off)
@@ -203,12 +248,41 @@ def history(b: Builder, shop: str, p: Persona, cid: uuid.UUID, linked: bool) -> 
                 disputed = True
                 eid = dispute(b, shop, p, cid, when)
                 b.pay(eid, 15000, method, paid_at)
+                paid_today.append((eid, 15000))
                 continue
 
             eid = b.entry(shop, p.key, cid, paise, "settled", when, note=note)
             if linked:
                 b.ack(shop, eid, paise, when + timedelta(seconds=rng.randint(20, 90)))
+                # Its card in his thread, as the app posts it when it is written:
+                # his chat carries the same history as his book.
+                b.say(
+                    shop,
+                    p.key,
+                    cid,
+                    "bahi",
+                    "entry",
+                    wording.recorded(name, paise),
+                    when + timedelta(seconds=5),
+                    eid,
+                )
             b.pay(eid, paise, method, paid_at)
+            paid_today.append((eid, paise))
+
+        if linked and paid_today:
+            # One line for the day's payment, as the app posts it; nothing was
+            # left open after it (his open entries all come after his last
+            # payment).
+            b.say(
+                shop,
+                p.key,
+                cid,
+                "bahi",
+                "entry",
+                wording.paid(sum(x for _, x in paid_today), method, 0),
+                paid_at + timedelta(seconds=5),
+                paid_today[-1][0],
+            )
         prev = pay_day
 
     for o in p.opens:
@@ -232,6 +306,10 @@ def opened(
     )
     if acked:
         b.ack(shop, eid, o.paise, when + timedelta(seconds=rng.randint(20, 90)))
+    if linked:
+        # Its card in his thread, posted as it was recorded.
+        body = wording.recorded(SHOPS[shop][0], o.paise)
+        b.say(shop, who, cid, "bahi", "entry", body, when + timedelta(seconds=5), eid)
 
 
 def dispute(
@@ -239,7 +317,18 @@ def dispute(
 ) -> uuid.UUID:
     """₹200 recorded, disputed, corrected to ₹150 and confirmed. Returns the
     correction, which is the entry that gets paid."""
-    wrong = b.entry(shop, p.key, cid, 20000, "corrected", when, note="Atta, tel")
+    name = SHOPS[shop][0]
+    said_wrong = when + timedelta(minutes=2)
+    wrong = b.entry(
+        shop,
+        p.key,
+        cid,
+        20000,
+        "corrected",
+        when,
+        note="Atta, tel",
+    )
+    b.plan.entries[-1] = replace(b.plan.entries[-1], disputed_at=said_wrong)
     right = b.entry(
         shop,
         p.key,
@@ -252,29 +341,33 @@ def dispute(
     )
     b.ack(shop, right, 15000, when + timedelta(minutes=7))
 
-    tid = uid("thread", shop, p.key)
-    read = when + timedelta(minutes=10)
-    b.plan.threads.append(
-        ThreadRow(tid, cid, created_at=when, shop_read_at=read, customer_read_at=read)
-    )
     lines = (
-        ("bahi", "entry", "Ramesh recorded ₹200 udhaar.", wrong, 0),
-        ("customer", "text", "Tel nahi liya tha maine. Sirf atta.", None, 2),
-        ("shop", "text", "Achha haan, galti ho gayi. 150 kar deta hoon.", None, 4),
-        ("bahi", "entry", "Corrected by Ramesh to ₹150.", right, 6),
+        ("bahi", "entry", wording.recorded(name, 20000), wrong, timedelta(seconds=5)),
+        ("bahi", "entry", wording.disputed(p.name, 20000), wrong, timedelta(minutes=2)),
+        (
+            "customer",
+            "text",
+            "Tel nahi liya tha maine. Sirf atta.",
+            None,
+            timedelta(minutes=2, seconds=1),
+        ),
+        (
+            "shop",
+            "text",
+            "Achha haan, galti ho gayi. 150 kar deta hoon.",
+            None,
+            timedelta(minutes=4),
+        ),
+        (
+            "bahi",
+            "entry",
+            wording.corrected(name, 15000),
+            right,
+            timedelta(minutes=6, seconds=5),
+        ),
     )
-    for n, (author, kind, body, eid, minutes) in enumerate(lines):
-        b.plan.messages.append(
-            MessageRow(
-                id=uid("message", str(tid), str(n)),
-                thread_id=tid,
-                author=author,
-                kind=kind,
-                body=body,
-                sent_at=when + timedelta(minutes=minutes, seconds=5),
-                entry_id=eid,
-            )
-        )
+    for author, kind, body, eid, after in lines:
+        b.say(shop, p.key, cid, author, kind, body, when + after, eid)
     return right
 
 
@@ -406,6 +499,16 @@ def sharma_elsewhere(b: Builder, sharma: uuid.UUID) -> None:
         b.pay(old, settled[1], "upi", at(paid_on, 19, 30))
         new = b.entry(shop, "sharma", cid, still[1], "confirmed", at(still[0], 17, 45))
         b.ack(shop, new, still[1], at(still[0], 17, 46))
+        b.say(
+            shop,
+            "sharma",
+            cid,
+            "bahi",
+            "entry",
+            wording.recorded(SHOPS[shop][0], still[1]),
+            at(still[0], 17, 45, 5),
+            new,
+        )
 
 
 # ── the whole world ──────────────────────────────────────────────────────────
@@ -430,6 +533,7 @@ def plan() -> Plan:
         if p.joined != "invited":
             history(b, HOME, p, ids[p.key], linked=p.joined == "linked")
     sharma_elsewhere(b, ids["sharma"])
+    b.all_read()
     return b.plan
 
 

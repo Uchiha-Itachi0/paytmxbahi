@@ -82,6 +82,11 @@ at the top of each table in `api/migrations/001_init.sql`.
 | `threads` | one conversation per shopkeeper and customer |
 | `messages` | one bubble; no amount column |
 | `scans` | someone at the counter, waiting for three minutes |
+| `reminders` | a reminder Tonight drafted: its words, its hour, and the shopkeeper's Stop |
+
+The munshi's conversations (`conversations`, `turns`, `drafts`) are in
+`004_munshi.sql`; `reminders` and a new customer on the munshi's card are in
+`005_tonight_and_new_customers.sql`.
 
 Balances, expiry, payment gaps and tonight's decisions are computed, never
 stored. Money is `bigint` paise. We store no phone numbers.
@@ -91,44 +96,164 @@ stored. Money is `bigint` paise. We store no phone numbers.
 ```
 make db        create, migrate and seed; writes contract/shop.json
 make db-check  read the seed back: the book, the cast, everyone's usual gap
+make decide    tomorrow's reminders: who is sent one, who is held, and why
 make check     ruff, ruff format, mypy strict, pytest
 make web-check tsc, eslint, vitest: no typed amounts, no shaming words, one palette
 make api       the service on :8000
 make web       the surfaces on :3000
 ```
 
-Everything still runs with the venue wifi off: the demo clips' transcripts are
-cached to disk, and with `SARVAM_OFFLINE` on (the default) our parser reads. The deployed build is what a judge's phone reaches
-over its own mobile data.
+The book, the scan-to-confirm loop and entering by hand run with the venue wifi
+off. The munshi needs Sarvam: set `SARVAM_OFFLINE=0` and `SARVAM_API_KEY` in
+`api/.env`. The deployed build is what a judge's phone reaches over its own mobile
+data.
 
-## Voice
+## The munshi: voice and chat
 
-The shopkeeper says "do sau", or "Anubhav Shukla ko do sau bees" when the
-customer isn't at the counter. Sarvam reads it, and our code checks every rupee:
+The shopkeeper talks or types to the munshi, the shop's bookkeeper as an agent:
+"बी विंग में जो रहते हैं उनके नाम दो सौ लिख दो", "दूध वाले भैया ने पाँच सौ दिए",
+"Sharma took goods for 200". The AI does the work, code keeps the book, and both
+people approve.
 
-- Sarvam's `saaras:v4` turns the audio into words, listening out for the names at
-  the counter and in the book.
-- Sarvam-105B reads the words: udhaar or payment, the words that state the amount,
-  and the words that name the person. It picks nobody.
-- `domain/check` holds that reading to the words: the amount words must be in the
-  transcript, and `parse` must read them as the same number (the number recorded
-  is ours, not the model's).
-- `domain/who` decides the person from the words that name or describe him, by
-  sound, in roman and Devanagari. A surname, a room number ("204 wale") or how the
-  shop describes him ("medical wale", "चाय टपरी वाले") picks one; "Anubhav" alone
-  asks "Kaunse Anubhav?"; a weak match is only offered. Which description words
-  tell customers apart comes from the book: a word more than three customers share
-  ("Room", "wing") is never used. No word list is written in the code.
-- `speak` puts the amount into words, and Sarvam's `bulbul:v3` says them back
-  ("दो सौ बीस रुपये", never a name); the entry goes after three seconds unless
-  cancelled, and the customer confirms on his own phone.
+- Sarvam's `saaras:v4` turns his voice into words, with the book's names as hints.
+- `sarvam-105b-conversations` (Sarvam's model for voice agents; thinking off, and
+  `sarvam-105b` asked too if it is slow) understands him and calls tools
+  (`munshi/tools.py`): `find_customer` searches the real book by the sound of a
+  name and the words of a description (`domain/find`), `counter` and
+  `customer_card` read it, and `propose_entry` puts a card on his screen.
+- When three or more customers fit, it asks "नाम बताऊँ, या आप बताएँगे?" and
+  reads names only if asked. It never says anyone's balance unless asked.
+- The card shows the amount as stored, not the munshi's sentence, with his words
+  under it. An ordinary entry goes after three seconds unless he says or taps no;
+  a name that only sounded close, ₹5,000 or more, or three times what the customer
+  usually takes waits for a clear हाँ.
+- Only his yes writes, through the same ledger as a typed entry: udhaar becomes an
+  entry, and जमा is split across the customer's open entries, oldest first. Then
+  the munshi says whether it reached the customer's phone, from what the book
+  reports. The customer still confirms on his own phone.
+- Every turn (his words, each tool call and result, each reply, and how long the
+  model took) is kept in `turns`, so any conversation can be traced.
 
-Tapping Add udhaar opens the mic straight away, and it stops by itself a second
-after he stops speaking.
+The munshi needs Sarvam. Offline, the screen's keypad and book still record by
+hand. Its replies are spoken in Sarvam's `bulbul:v3` voice (`shreya`).
 
-Offline, or when Sarvam-105B doesn't answer, `parse` reads the words instead and
-the same checks decide who. Nothing is sent by itself then: the amount and the
-person are filled in, and the shopkeeper taps Send.
+```
+make munshi-eval another model plays the shopkeeper with a hidden goal; scored on
+                 the entry the book would hold (live Sarvam, rolled back, costs credits)
+```
+
+## The whole loop
+
+Both screens update every two seconds, so the shopkeeper's laptop and the
+customer's phone move together.
+
+**Chat** (`/m/messages`, `/m/chat/…`, `/c/chat/…`). One thread per shop and
+customer. People type; BAHI posts each entry's card, drawn from the entry as it
+is now, so ₹200 posted this morning shows ✓ the moment he confirms. The customer
+answers an entry in the thread: "Yes, I owe ₹200", or "That's not right" with his
+reason. The shopkeeper can Correct the amount of any entry nothing has been paid
+against, whether the customer disputed it, wrote about it in the chat, or it was
+his own slip. That records a new entry pointing at the old one; the old one is
+kept, marked corrected, and the customer confirms the new one himself. The munshi
+does the same by voice ("जाधव का पाँच सौ नहीं, तीन सौ था"), on a card that waits
+for a clear हाँ. When the customer wrote last, the
+munshi suggests two replies in his language, and nothing goes until the
+shopkeeper taps one. A message has nowhere to carry an amount: the Pay button
+comes from the customer's own entries.
+
+**The customer's own book** (`/c/udhaar`). What he owes across every shop he is
+in the book of, each entry, and Pay (also beside the message box in his chat).
+Pay opens the payment screen with what he owes that shop filled in; he can pay
+less. Then Proceed securely, then the UPI PIN (the demo takes any four digits and
+never sends them anywhere). The book takes the payment from his oldest entries
+first, each one named, and tells the shop in the thread with what is still open.
+A disputed entry waits until it is agreed, and an expired one is shown struck
+through, claiming nothing. Then Cleared, or what is still open, and what is open
+elsewhere. The demo's customer side asks whose phone it is: Sharma owes three
+shops.
+
+**Someone who can't scan** (`/m/customers/new`). A mobile number or UPI ID finds
+the Paytm account (a synthetic directory, `data/directory.py`, stands in for
+Paytm's lookup, and the number is never kept); the invite waits on their phone,
+and nothing is recorded until they accept. No phone: kept by name only. Or tell
+the munshi, "रमेश को पाँच सौ", and when nobody fits it asks whether he is new, then
+puts "Ramesh · New · Chawl 7 · ₹500" on a card that waits for a clear हाँ.
+
+**The Soundbox.** The shopkeeper's screens ask `/events` every two seconds: a
+scan chimes, a yes plays a done tone, a dispute asks its question tone, a message
+pings, and money arriving is said aloud with what is still open ("दो सौ रुपये
+मिले, तीन सौ चालीस रुपये बाकी"). It never says a name; the strip on the screen
+shows who.
+
+**Tomorrow** (`/m/tonight`, and "कल किसको याद दिलाना है?" to the munshi). Code
+decides, from each customer's own history (`domain/tonight.py`): a reminder goes
+only to someone past the longest gap they have ever had, at the hour they usually
+pay, between 9 am and 8 pm. Everyone else is held, and the reason is named: inside
+their own gap, an entry they haven't confirmed or say is wrong, too new to read,
+kept by name only, or reminded within their gap. On the seed that is 4 of 38:
+Patil at 10 am, Iqbal at 6:30 pm, Raju and Salma at 8 pm. The munshi writes each
+reminder in the customer's words; our code refuses one that names any figure but
+their balance, so it can never carry a date or another sum, and falls back to our
+own sentence. The shopkeeper can stop any of them. `POST /tonight` is the 11 pm
+run and `POST /tonight/send` sends each at its hour; n8n will call both (V8a).
+Until then, Send now posts them at once for the demo.
+
+## Memory: what was said (Cognee)
+
+The book has the arithmetic. Memory keeps what people said, which the numbers
+can't show:
+
+- **The shopkeeper's note.** "इकबाल भाई की सैलरी 10 तारीख को आती है, तब तक याद मत
+  दिलाना" to the munshi, or typed on the customer's page (`/m/customers/…`, "BAHI
+  remembers"), with a day to stay quiet until.
+- **A customer's promise in chat.** Raju writes "भैया 6 तारीख को दे दूँगा"; a few
+  seconds later Sarvam has read it as a promise for the 6th, kept with his own
+  words and the message it came from.
+- **A nickname.** A card he confirmed for Raju after calling him "पप्पू": next
+  time "पप्पू" finds Raju, as a hint, and the card waits for a clear हाँ. When a
+  name finds nobody and he then names someone ("चिंटू" … "डिसूज़ा"), the card isn't
+  shown until the munshi has said whether that was their name; the card shows it.
+- **What else they say.** Each customer message is read once for anything worth
+  remembering: a complaint ("तेल का दाम ज़्यादा लगा, शिकायत की"), a hardship, a
+  request. A dispute's reason is his own message, so it is read too.
+- **How they pay** (`domain/pattern.py`, on the customer's page). Code works out,
+  from his own book: his usual gap, the gap 8 in 10 of his payments fall within,
+  his latest gaps, the time of day he pays, when his next payment is likely (or
+  that he is past it), promises kept, and entries he said were wrong.
+
+Ask the munshi "पाटिल कब देगा?" and it answers as a guess from his card, his
+promise and your notes, which outrank his rhythm, and never with a date that has
+passed ("मेरे हिसाब से लेट है, 40 दिन हो गए…"). "इस हफ़्ते कौन देगा?" is worked out
+at that moment (`expected_payments`); "कौन ज़्यादा शिकायत करता है?" is searched in
+Cognee, which also keeps each customer's pattern as a sentence, rewritten when
+his book changes.
+
+Tomorrow holds anyone past their gap while what was said still asks to wait:
+"Raju said in chat: 'भैया 6 तारीख को पक्का दे दूँगा'. Nothing is sent until after 6
+Oct." A memory can only hold a reminder, never send one; it never writes an entry
+or changes an amount, and the customer never sees the shopkeeper's notes. Forget
+takes a memory back at once.
+
+The record is the book's own `memories` table: what the page lists, what
+Tomorrow reads. Cognee keeps a copy to search by meaning ("इस हफ़्ते कौन देने
+वाला है?" → the munshi's `recall`), all on this machine: its own role and
+database on the local Postgres (graph and vectors, each shop in its own
+schema), Sarvam's `sarvam-105b` to read and extract, and OpenAI's
+`text-embedding-3-small` for the vectors, because Sarvam has no embeddings API.
+Its telemetry is off. A worker in the API does this in the background; without
+Cognee, notes, promises and Tomorrow's holds still work.
+
+```bash
+brew install pgvector   # once, into the local Postgres
+make memory-db          # its role and databases; writes MEMORY_DATABASE_URL to api/.env
+make memory-check       # live: Sarvam, OpenAI and Cognee end to end, on the check databases
+```
+
+## Voice before the munshi
+
+The V2 path is still in the code, though no longer on the screen: Sarvam-105B read
+the words, `domain/check` held its amount to the words, and `domain/who` decided
+the person. The numbers below measured that path.
 
 ```
 make voice-eval  the 1,338-recording test behind slide 4, replayed through today's checker

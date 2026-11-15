@@ -45,6 +45,9 @@ HEDGE_AFTER_S = 2.5
 TRANSLITERATE_TIMEOUT_S = 3.0
 #: An amount takes bulbul:v3 0.4 to 0.6 s; the countdown is 3 s.
 TTS_TIMEOUT_S = 3.0
+#: The munshi's sentences are longer: on 30 Sep, 61 characters took 1.3 to 2.2 s,
+#: and five names 3.2 s, or 6.7 s at worst. Said whole, never in pieces.
+SENTENCE_TTS_TIMEOUT_S = 15.0
 TTS_MODEL = "bulbul:v3"
 #: Picked by ear from twelve bulbul:v3 voices on 30 Sep: the clearest readback.
 VOICE = "shreya"
@@ -53,6 +56,17 @@ TTS_SAMPLE_RATE = 24000
 
 class SarvamError(Exception):
     """Sarvam could not be reached, or refused the request."""
+
+
+class OutOfCredits(SarvamError):
+    """Sarvam refused because the account has no credits left (402). Asking
+    again won't help; someone has to top it up."""
+
+
+def _refused(status: int, text: str) -> SarvamError:
+    if status == 402:
+        return OutOfCredits(f"Sarvam said 402: {text[:200]}")
+    return SarvamError(f"Sarvam said {status}: {text[:200]}")
 
 
 def media_type(content_type: str) -> str:
@@ -65,7 +79,11 @@ _POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="sarvam")
 
 
 def hedged[T](
-    call: Callable[[], T], *, timeout: float, after: float = HEDGE_AFTER_S
+    call: Callable[[], T],
+    *,
+    timeout: float,
+    after: float = HEDGE_AFTER_S,
+    again: Callable[[], T] | None = None,
 ) -> T:
     """The call's answer, asked a second time if the first is slow.
 
@@ -73,14 +91,15 @@ def hedged[T](
     the slow one would leave the shopkeeper standing there; asking again after
     `after` seconds and taking whichever answers first costs one extra request,
     only when it's needed ("hedged requests", The Tail at Scale, 2013). A refusal
-    that comes back quickly is not asked again.
+    that comes back quickly is not asked again. `again`, if given, is what is
+    asked the second time: the munshi asks a second model rather than the same one.
     """
     deadline = time.monotonic() + timeout
     first = _POOL.submit(call)
     done, _ = wait([first], timeout=min(after, timeout))
     if done:
         return first.result()
-    pending: set[Future[T]] = {first, _POOL.submit(call)}
+    pending: set[Future[T]] = {first, _POOL.submit(again or call)}
     failure: SarvamError | None = None
     while pending:
         left = max(0.0, deadline - time.monotonic())
@@ -125,7 +144,7 @@ def transcribe(
     except httpx.HTTPError as e:
         raise SarvamError(f"could not reach Sarvam: {e}") from e
     if r.status_code != 200:
-        raise SarvamError(f"Sarvam said {r.status_code}: {r.text[:200]}")
+        raise _refused(r.status_code, r.text)
     transcript = r.json().get("transcript")
     if not isinstance(transcript, str):
         raise SarvamError("Sarvam sent no transcript")
@@ -140,7 +159,7 @@ def _post_json(url: str, body: dict[str, Any], *, key: str, timeout: float) -> A
     except httpx.HTTPError as e:
         raise SarvamError(f"could not reach Sarvam: {e}") from e
     if r.status_code != 200:
-        raise SarvamError(f"Sarvam said {r.status_code}: {r.text[:200]}")
+        raise _refused(r.status_code, r.text)
     return r.json()
 
 
@@ -174,6 +193,50 @@ def chat_json(
     return answer
 
 
+#: The munshi's model: Sarvam's own model for voice agents. In our test of 12
+#: shop conversations it was right 24 of 24 times, replying in about half a
+#: second; thinking modes were ten times slower and made mistakes.
+MUNSHI_MODEL = "sarvam-105b-conversations"
+#: Asked too when the munshi's model is slow, with thinking off.
+MUNSHI_SECOND = "sarvam-105b"
+#: Room for a reply of a sentence or two, or a tool call.
+MUNSHI_MAX_TOKENS = 400
+
+
+def munshi(
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, key: str
+) -> dict[str, Any]:
+    """The munshi's next message: a reply, or tool calls. If its model hasn't
+    answered in HEDGE_AFTER_S, sarvam-105b is asked the same, and the first answer
+    is used."""
+
+    def ask(model_name: str) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": model_name,
+            "temperature": 0.2,
+            "reasoning_effort": None,
+            "max_tokens": MUNSHI_MAX_TOKENS,
+            "messages": messages,
+        }
+        if tools:
+            body["tools"] = tools
+        reply = _post_json(CHAT_URL, body, key=key, timeout=CHAT_TIMEOUT_S)
+        try:
+            message = reply["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise SarvamError(f"Sarvam sent no message: {e}") from e
+        if not isinstance(message, dict):
+            raise SarvamError("Sarvam's message was not an object")
+        return message
+
+    model_name = os.environ.get("SARVAM_MUNSHI_MODEL", MUNSHI_MODEL)
+    return hedged(
+        lambda: ask(model_name),
+        timeout=CHAT_TIMEOUT_S,
+        again=lambda: ask(MUNSHI_SECOND),
+    )
+
+
 def transliterate(text: str, *, key: str) -> str:
     """ "Gaikwad" -> गायकवाड़, the way Sarvam's speech-to-text writes it."""
     body = {
@@ -193,7 +256,7 @@ def speaker() -> str:
     return os.environ.get("SARVAM_TTS_SPEAKER", VOICE).strip().lower() or VOICE
 
 
-def speak(text: str, *, key: str, voice: str) -> bytes:
+def speak(text: str, *, key: str, voice: str, timeout: float = TTS_TIMEOUT_S) -> bytes:
     """The words, spoken by Sarvam's bulbul:v3, as a WAV file."""
     body = {
         "text": text,
@@ -203,7 +266,7 @@ def speak(text: str, *, key: str, voice: str) -> bytes:
         "speech_sample_rate": TTS_SAMPLE_RATE,
         "output_audio_codec": "wav",
     }
-    reply = _post_json(TTS_URL, body, key=key, timeout=TTS_TIMEOUT_S)
+    reply = _post_json(TTS_URL, body, key=key, timeout=timeout)
     audios = reply.get("audios") if isinstance(reply, dict) else None
     if not isinstance(audios, list) or not audios or not isinstance(audios[0], str):
         raise SarvamError("Sarvam sent no audio")
