@@ -14,11 +14,18 @@ from uuid import UUID
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from bahi import clock, voice
+from bahi import clock, paytm, voice
 from bahi.munshi import brain
 from bahi.service import ledger
 from bahi.service.deps import Con
-from bahi.service.models import CardEditIn, CardOut, MunshiIn, MunshiOut
+from bahi.service.models import (
+    CardEditIn,
+    CardOut,
+    MunshiHistoryOut,
+    MunshiIn,
+    MunshiLineOut,
+    MunshiOut,
+)
 from bahi.service.routes.voice import _read
 from bahi.store import customers, entries
 from bahi.store import munshi as store
@@ -26,6 +33,9 @@ from bahi.store.db import Conn
 from bahi.voice import said, sarvam
 
 router = APIRouter(tags=["munshi"])
+
+#: A tap on the card, as the screen showed it.
+TAPS = {brain.TAPPED_YES: "Yes.", brain.TAPPED_NO: "No."}
 
 OFFLINE = "The munshi needs the internet, and voice is offline. Enter it by hand below."
 
@@ -60,38 +70,54 @@ def _was(con: Conn, entry_id: str | None) -> int | None:
     return e.amount_paise if e else None
 
 
+def _card(con: Conn, d: store.Draft) -> CardOut:
+    c = customers.get(con, d.customer_id) if d.customer_id else None
+    name = c.display_name if c else d.new_name
+    details = d.kind == "details"
+    assert name is not None
+    return CardOut(
+        draft_id=UUID(d.id),
+        customer_id=UUID(c.id) if c else None,
+        display_name=name,
+        tag=c.tag if c else d.new_tag,
+        change_name=d.new_name if details else None,
+        change_tag=d.new_tag if details else None,
+        message=d.message,
+        amount_paise=d.amount_paise,
+        kind=d.kind,  # type: ignore[arg-type]
+        new=d.new_name is not None and not details,
+        corrects_amount_paise=_was(con, d.corrects_entry_id)
+        if d.kind == "correction"
+        else None,
+        status=d.status,  # type: ignore[arg-type]
+        reasons=d.reasons,  # type: ignore[arg-type]
+        spoken_text=d.spoken_text,
+        called=d.called,
+        entry_id=UUID(d.entry_id) if d.entry_id else None,
+        on_bahi=c is not None and c.joined == "linked",
+    )
+
+
 def _out(
-    con: Conn, shop_id: str, o: brain.Outcome, heard: str | None, source: str
+    con: Conn,
+    shop_id: str,
+    o: brain.Outcome,
+    heard: str | None,
+    source: str,
+    language: str | None = None,
 ) -> MunshiOut:
-    card = None
-    d = o.draft
-    if d is not None:
-        c = customers.get(con, d.customer_id) if d.customer_id else None
-        name = c.display_name if c else d.new_name
-        assert name is not None
-        card = CardOut(
-            draft_id=UUID(d.id),
-            customer_id=UUID(c.id) if c else None,
-            display_name=name,
-            tag=c.tag if c else d.new_tag,
-            amount_paise=d.amount_paise,
-            kind=d.kind,  # type: ignore[arg-type]
-            new=d.new_name is not None,
-            corrects_amount_paise=_was(con, d.corrects_entry_id),
-            status=d.status,  # type: ignore[arg-type]
-            reasons=d.reasons,  # type: ignore[arg-type]
-            spoken_text=d.spoken_text,
-            called=d.called,
-            entry_id=UUID(d.entry_id) if d.entry_id else None,
-            on_bahi=c is not None and c.joined == "linked",
-        )
+    card = _card(con, o.draft) if o.draft is not None else None
+    # Said back in the language of the reply's own script (Marathi when he was
+    # heard in Marathi): the munshi answers in his language.
+    lang = voice.language_of(o.reply or "", language)
     say = (
         f"/shops/{shop_id}/munshi/{o.conversation_id}/say/{o.reply_turn_id}.wav"
+        f"?lang={lang}"
         if o.reply and o.reply_turn_id
         else None
     )
     if say and o.reply:
-        said.warm(o.reply)  # ready, or nearly, when the screen asks for it
+        said.warm(o.reply, lang)  # ready, or nearly, when the screen asks for it
     return MunshiOut(
         conversation_id=UUID(o.conversation_id),
         heard=heard,
@@ -132,7 +158,7 @@ def talk_voice(
         # words. Nothing goes to the munshi (an empty turn is refused anyway).
         raise HTTPException(422, "Didn't catch any words. Tap the mic and say it again.")
     o = brain.talk(con, shop_id, cid, t.text, clock.now(), ask, heard=t.text)
-    return _out(con, shop_id, o, t.text, t.source)
+    return _out(con, shop_id, o, t.text, t.source, t.language)
 
 
 def _tap(
@@ -147,6 +173,40 @@ def _tap(
         raise HTTPException(404, f"no card {draft_id} in this conversation")
     o = brain.tap(con, shop_id, cid, str(draft_id), yes, clock.now(), ask)
     return _out(con, shop_id, o, None, "tap")
+
+
+@router.get("/shops/{shop_id}/munshi/{conversation_id}", response_model=MunshiHistoryOut)
+def history(shop_id: str, conversation_id: str, con: Con) -> MunshiHistoryOut:
+    """A conversation so far, to show again: Paytm Assistant keeps its history.
+    His words (what the mic heard, or what he typed; a tap as Yes or No) and the
+    munshi's replies. Tool calls and results are the model's, not shown."""
+    cid = _conversation(con, shop_id, conversation_id)
+    assert cid is not None
+    lines: list[MunshiLineOut] = []
+    for t in store.turns(con, cid):
+        content = t.message.get("content")
+        if not isinstance(content, str):
+            continue
+        if t.role == "user":
+            text = t.heard or TAPS.get(content, content)
+        elif t.role == "assistant":
+            text = brain.spoken(content)
+        else:
+            continue
+        if text:
+            lines.append(
+                MunshiLineOut(
+                    who="you" if t.role == "user" else "munshi",
+                    text=text,
+                    at=t.created_at,
+                )
+            )
+    d = store.latest_draft(con, cid)
+    return MunshiHistoryOut(
+        conversation_id=UUID(cid),
+        lines=lines,
+        card=_card(con, d) if d is not None and d.status == "shown" else None,
+    )
 
 
 @router.post("/shops/{shop_id}/munshi/{conversation_id}/cards/{draft_id}/yes")
@@ -192,7 +252,7 @@ def card_edit(
     response_class=FileResponse,
 )
 def say_reply(
-    shop_id: str, conversation_id: UUID, turn_id: UUID, con: Con
+    shop_id: str, conversation_id: UUID, turn_id: UUID, con: Con, lang: str = ""
 ) -> FileResponse:
     """The munshi's reply in Sarvam's voice (Bulbul, shreya). 503 when voice is
     offline; the screen then shows the reply without saying it."""
@@ -207,6 +267,7 @@ def say_reply(
         raise HTTPException(404, "no reply to say")
     text = brain.spoken(str(t.message["content"]))
     try:
-        return FileResponse(said.sentence(text), media_type="audio/wav")
+        language = lang if lang in paytm.LANGUAGES else voice.language_of(text)
+        return FileResponse(said.sentence(text, language), media_type="audio/wav")
     except sarvam.SarvamError as e:
         raise HTTPException(503, "Sarvam didn't say it this time") from e

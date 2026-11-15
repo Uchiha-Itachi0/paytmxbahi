@@ -7,9 +7,12 @@ when ₹200 was recorded shows ✓ the moment he confirms, and "paid" when he pa
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from bahi import paytm
 from bahi.domain import book as book_domain
+from bahi.domain import passbook
 from bahi.domain.limitation import expired
 from bahi.domain.wording import button
 from bahi.service import ledger, memory, pattern, views
@@ -22,6 +25,10 @@ from bahi.service.models import (
     MessageOut,
     MyShopOut,
     MyUdhaarOut,
+    PassbookOut,
+    PaymentOut,
+    PaytmAccountOut,
+    PaytmNameOut,
     ThreadEntryOut,
     ThreadOut,
 )
@@ -33,6 +40,8 @@ from bahi.store.entries import EntryRef
 
 #: Settled entries the customer's own book lists, per shop.
 PAID_SHOWN = 4
+#: A payment's line in the thread is written at most this long after it.
+PAID_WITHIN = timedelta(minutes=1)
 
 
 def card(e: EntryRef, today: date, corrects: EntryRef | None = None) -> ThreadEntryOut:
@@ -46,6 +55,8 @@ def card(e: EntryRef, today: date, corrects: EntryRef | None = None) -> ThreadEn
         corrects_entry_id=e.corrects_entry_id,
         corrects_amount_paise=corrects.amount_paise if corrects else None,
         disputed_at=e.disputed_at,
+        disputed_as=e.disputed_as,  # type: ignore[arg-type]
+        removed_at=e.removed_at,
         acknowledged_at=e.acknowledged_at,
         last_paid_at=e.last_paid_at,
         last_method=e.last_method,  # type: ignore[arg-type]
@@ -59,18 +70,60 @@ def card(e: EntryRef, today: date, corrects: EntryRef | None = None) -> ThreadEn
     )
 
 
-def _cards(con: Conn, customer_id: str, today: date) -> dict[str, ThreadEntryOut]:
-    mine = {e.id: e for e in entries.of_customer(con, customer_id)}
+def _cards(mine: list[EntryRef], today: date) -> dict[str, ThreadEntryOut]:
+    by_id = {e.id: e for e in mine}
+    return {e.id: card(e, today, by_id.get(e.corrects_entry_id or "")) for e in mine}
+
+
+def _lines(
+    mine: list[EntryRef], paid: list[entries.Repayment], name_only: bool
+) -> dict[str, passbook.Line]:
+    first_paid: dict[str, datetime] = {}
+    for p in paid:
+        first_paid.setdefault(p.entry_id, p.paid_at)
+    corrected_at = {
+        e.corrects_entry_id: e.recorded_at for e in mine if e.corrects_entry_id
+    }
     return {
-        e.id: card(e, today, mine.get(e.corrects_entry_id or "")) for e in mine.values()
+        e.id: passbook.Line(
+            entry_id=e.id,
+            amount_paise=e.amount_paise,
+            agreed_at=passbook.agreed_at(
+                acknowledged_at=e.acknowledged_at,
+                recorded_at=e.recorded_at,
+                name_only=name_only,
+                first_paid_at=first_paid.get(e.id),
+            ),
+            gone_at=e.removed_at or corrected_at.get(e.id),
+        )
+        for e in mine
     }
 
 
-def _standing(con: Conn, c: CustomerRef, today: date) -> tuple[int, int | None]:
-    """(what he owes, days since he last paid) at this shop, from the book."""
+def _passbook(
+    lines: list[passbook.Line], paid: list[passbook.Payment], at: datetime
+) -> PassbookOut:
+    m = passbook.moment(lines, paid, at)
+    return PassbookOut(before_paise=m.before_paise, after_paise=m.after_paise)
+
+
+@dataclass(frozen=True, slots=True)
+class Standing:
+    """What he has agreed he owes, what waits for his yes, what he said is
+    wrong, and the days since he last paid, at this shop, from the book."""
+
+    owed: int
+    waiting: int
+    disputed: int
+    day: int | None
+
+
+def _standing(con: Conn, c: CustomerRef, today: date) -> Standing:
     found = book_store.load(con, c.shop_id, c.id)
     ln = book_domain.line(found[0], today) if found else None
-    return (ln.balance_paise, ln.day) if ln else (0, None)
+    if ln is None:
+        return Standing(0, 0, 0, None)
+    return Standing(ln.balance_paise, ln.waiting_paise, ln.disputed_paise, ln.day)
 
 
 def _reminder_at(con: Conn, c: CustomerRef, today: date) -> datetime | None:
@@ -82,13 +135,42 @@ def thread(con: Conn, c: CustomerRef, today: date, *, for_shop: bool) -> ThreadO
     s = ledger.shop(con, c.shop_id)
     t = threads.of_customer(con, c.id)
     said = threads.messages(con, t.id) if t else []
-    cards = _cards(con, c.id, today)
+    mine = entries.of_customer(con, c.id)
+    repaid = entries.repayments_of(con, c.id)
+    cards = _cards(mine, today)
+    lines = _lines(mine, repaid, c.joined == "name_only")
+    every_line = list(lines.values())
+    payments = [passbook.Payment(p.entry_id, p.amount_paise, p.paid_at) for p in repaid]
     seen: set[str] = set()
+    claimed: set[int] = set()
     out: list[MessageOut] = []
     for m in said:
         first = m.entry_id is not None and m.entry_id not in seen
         if m.entry_id:
             seen.add(m.entry_id)
+        # A payment's line is written with its repayments: in the same moment
+        # live, a few seconds after them in the seed. Each is claimed once.
+        now_paid = (
+            [
+                p
+                for p in repaid
+                if id(p) not in claimed
+                and m.sent_at - PAID_WITHIN <= p.paid_at <= m.sent_at
+            ]
+            if m.kind == "entry" and not first
+            else []
+        )
+        claimed.update(id(p) for p in now_paid)
+        payment = (
+            PaymentOut(
+                amount_paise=sum(p.amount_paise for p in now_paid),
+                method=now_paid[0].method,  # type: ignore[arg-type]
+            )
+            if now_paid
+            else None
+        )
+        counted = lines[m.entry_id].agreed_at if first and m.entry_id else None
+        at = now_paid[-1].paid_at if now_paid else counted
         out.append(
             MessageOut(
                 id=m.id,
@@ -98,9 +180,11 @@ def thread(con: Conn, c: CustomerRef, today: date, *, for_shop: bool) -> ThreadO
                 sent_at=m.sent_at,
                 entry=cards.get(m.entry_id) if m.entry_id else None,
                 card=first,
+                payment=payment,
+                passbook=_passbook(every_line, payments, at) if at else None,
             )
         )
-    owed, day = _standing(con, c, today)
+    st = _standing(con, c, today)
     return ThreadOut(
         today=today,
         thread_id=t.id if t else None,
@@ -109,8 +193,10 @@ def thread(con: Conn, c: CustomerRef, today: date, *, for_shop: bool) -> ThreadO
         display_name=c.display_name,
         tag=c.tag,
         joined=c.joined,
-        balance_paise=owed,
-        day=day,
+        balance_paise=st.owed,
+        waiting_paise=st.waiting,
+        disputed_paise=st.disputed,
+        day=st.day,
         messages=out,
         reminder_at=_reminder_at(con, c, today) if for_shop else None,
     )
@@ -178,9 +264,11 @@ def inbox(con: Conn, shop_id: str, today: date) -> InboxOut:
 
 
 def customer_detail(con: Conn, c: CustomerRef, today: date) -> CustomerDetailOut:
-    owed, day = _standing(con, c, today)
+    st = _standing(con, c, today)
     cards = sorted(
-        _cards(con, c.id, today).values(), key=lambda e: e.recorded_at, reverse=True
+        _cards(entries.of_customer(con, c.id), today).values(),
+        key=lambda e: e.recorded_at,
+        reverse=True,
     )
     live = [e for e in cards if e.status != "settled"]
     paid = [e for e in cards if e.status == "settled"][:PAID_SHOWN]
@@ -191,19 +279,36 @@ def customer_detail(con: Conn, c: CustomerRef, today: date) -> CustomerDetailOut
         joined=c.joined,
         invite_pending=c.invite_person_id is not None,
         invited_at=c.invited_at,
-        balance_paise=owed,
-        day=day,
+        paytm=_paytm_name(con, c),
+        balance_paise=st.owed,
+        waiting_paise=st.waiting,
+        disputed_paise=st.disputed,
+        day=st.day,
         entries=sorted(live + paid, key=lambda e: e.recorded_at, reverse=True),
         memories=[memory.out(m) for m in memories.of_customer(con, c.id)],
         pattern=pattern.out(pattern.of_customer(con, c.shop_id, c.id, today)),
     )
 
 
+def _paytm_name(con: Conn, c: CustomerRef) -> PaytmNameOut | None:
+    a = paytm.account(con, c.person_id) if c.person_id and c.linked else None
+    return PaytmNameOut(name=a.name, upi=a.upi) if a else None
+
+
+def account_out(con: Conn, person_id: str) -> PaytmAccountOut | None:
+    a = paytm.account(con, person_id)
+    if a is None:
+        return None
+    return PaytmAccountOut(name=a.name, upi=a.upi, phone=a.phone)
+
+
 def _my_shop(con: Conn, c: CustomerRef, today: date, unread: int) -> MyShopOut:
     s = ledger.shop(con, c.shop_id)
-    owed, day = _standing(con, c, today)
+    st = _standing(con, c, today)
     cards = sorted(
-        _cards(con, c.id, today).values(), key=lambda e: e.recorded_at, reverse=True
+        _cards(entries.of_customer(con, c.id), today).values(),
+        key=lambda e: e.recorded_at,
+        reverse=True,
     )
     live = [e for e in cards if e.status != "settled"]
     paid = [e for e in cards if e.status == "settled"][:PAID_SHOWN]
@@ -211,11 +316,12 @@ def _my_shop(con: Conn, c: CustomerRef, today: date, unread: int) -> MyShopOut:
         shop=views.shop_out(s),
         customer_id=c.id,
         display_name=c.display_name,
-        balance_paise=owed,
+        balance_paise=st.owed,
+        waiting_paise=st.waiting,
         payable_paise=sum(
             e.amount_paise - e.paid_paise for e in ledger.payable(con, c.id, today)
         ),
-        day=day,
+        day=st.day,
         entries=sorted(live + paid, key=lambda e: e.recorded_at, reverse=True),
         unread=unread,
     )
@@ -249,6 +355,7 @@ def my_udhaar(con: Conn, person_id: str, today: date) -> MyUdhaarOut:
     return MyUdhaarOut(
         today=today,
         person_id=person_id,
+        account=account_out(con, person_id),
         total_paise=sum(m.balance_paise for m in mine),
         shops=mine,
         invites=invites,

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { Chat, Mic, Moon, Person, Plus, Scan } from "@/components/icons";
+import { Chat, Mic, Moon, Person, Plus, Scan, Spark } from "@/components/icons";
 import { MerchantShell } from "@/components/shell/Shell";
 import { Card } from "@/components/ui/Card";
 import { Figure } from "@/components/ui/Figure";
@@ -15,6 +15,7 @@ import type { BookLine, Inbox, ShopBook } from "@/lib/api/types";
 import { SHOP_ID } from "@/lib/config";
 import { parseShop } from "@/lib/contract";
 import { formatPaise } from "@/lib/money";
+import { warmMic } from "@/lib/useRecorder";
 
 /**
  * A1 · The book. What the shopkeeper opens every morning, live.
@@ -29,7 +30,28 @@ import { formatPaise } from "@/lib/money";
 function subline(line: BookLine): string {
   const parts = [line.tag, `day ${line.day}`];
   if (line.joined === "name_only") parts.push("name only");
+  // What isn't agreed yet is named, not added: the amount shown is what they
+  // said yes to, or, owing nothing agreed, what waits on them.
+  const waiting = line.waiting_paise ?? 0;
+  const disputed = line.disputed_paise ?? 0;
+  if (line.balance_paise > 0 && waiting > 0) parts.push(`+${formatPaise(waiting)} waiting`);
+  if (line.balance_paise === 0 && waiting > 0) parts.push("waiting for their yes");
+  if (disputed > 0) parts.push(`says ${formatPaise(disputed)} is wrong`);
   return parts.filter(Boolean).join(" · ");
+}
+
+/** The amount on his row: agreed; with nothing agreed, what waits on them. */
+function shown(line: BookLine): number {
+  if (line.balance_paise > 0) return line.balance_paise;
+  return (line.waiting_paise ?? 0) + (line.disputed_paise ?? 0);
+}
+
+function apart(waiting: number, disputed: number): string | null {
+  const parts = [
+    waiting > 0 ? `${formatPaise(waiting)} waiting for customers' yes` : null,
+    disputed > 0 ? `${formatPaise(disputed)} customers say is wrong` : null,
+  ].filter(Boolean);
+  return parts.length ? `Not counted: ${parts.join(" · ")}` : null;
 }
 
 export function BookScreen(): React.ReactElement {
@@ -38,20 +60,25 @@ export function BookScreen(): React.ReactElement {
   const shop = data ? parseShop(data) : undefined;
 
   return (
-    <MerchantShell shopName={shop?.shop.name}>
+    <MerchantShell shopName={shop?.shop.name} fixed>
       {shop ? (
         <>
           <Card>
             <Figure
-              label="Udhaar outstanding"
+              label="Udhaar outstanding · agreed"
               value={formatPaise(shop.book.outstanding_paise)}
-              fine={`${shop.book.owing_count} of ${shop.book.customer_count} customers owe something`}
+              fine={`${shop.book.owing_count} of ${shop.book.customer_count} customers owe something they said yes to`}
             />
+            {apart(shop.book.waiting_paise ?? 0, shop.book.disputed_paise ?? 0) ? (
+              <p className="mt-1 text-[12px] font-semibold leading-[1.45] text-sub">
+                {apart(shop.book.waiting_paise ?? 0, shop.book.disputed_paise ?? 0)}
+              </p>
+            ) : null}
           </Card>
           <Card>
             <TileGrid
               tiles={[
-                { label: "Add udhaar", icon: <Mic />, href: "/m/add?listen=1" },
+                { label: "Add udhaar", icon: <Mic />, href: "/m/add?listen=1", onTap: warmMic },
                 { label: "Udhaar QR", icon: <Scan />, href: "/m/qr" },
                 {
                   label: "Messages",
@@ -62,16 +89,17 @@ export function BookScreen(): React.ReactElement {
                 { label: "Tomorrow", icon: <Moon />, href: "/m/tonight" },
                 { label: "Customers", icon: <Person />, href: "/m/customers" },
                 { label: "Add customer", icon: <Plus />, href: "/m/customers/new" },
+                { label: "Assistant", icon: <Spark />, href: "/m/assistant" },
               ]}
             />
           </Card>
-          <Card title="Who owes you">
+          <Card title="Who owes you" fill>
             {shop.book.lines.map((line) => (
               <Row
                 key={line.customer_id}
                 name={line.display_name}
                 sub={subline(line)}
-                amountPaise={line.balance_paise}
+                amountPaise={shown(line)}
                 chip={line.chip}
                 href={
                   line.joined === "linked"
@@ -96,7 +124,7 @@ export function BookScreen(): React.ReactElement {
           <Dots />
         </Card>
       )}
-      <StickyPill icon={<Mic />} href="/m/add?listen=1">
+      <StickyPill icon={<Mic />} href="/m/add?listen=1" floating onTap={warmMic}>
         Add udhaar
       </StickyPill>
     </MerchantShell>

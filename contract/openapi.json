@@ -101,7 +101,7 @@
           "shopkeeper"
         ],
         "summary": "Get Counter",
-        "description": "A2. Everyone who scanned the udhaar QR in the last three minutes.",
+        "description": "A2. Everyone who scanned the udhaar QR in the last three minutes, and\nanyone still waiting on his answer to what they asked for.",
         "operationId": "get_counter_shops__shop_id__counter_get",
         "parameters": [
           {
@@ -272,6 +272,76 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EntryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shops/{shop_id}/scans/{scan_id}/answer": {
+      "post": {
+        "tags": [
+          "shopkeeper"
+        ],
+        "summary": "Answer Ask",
+        "description": "His answer to what she asked for at the counter. Yes writes exactly that,\nagreed by both; change writes his amount for her own yes; no writes nothing.",
+        "operationId": "answer_ask_shops__shop_id__scans__scan_id__answer_post",
+        "parameters": [
+          {
+            "name": "shop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Shop Id"
+            }
+          },
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerAskIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EntryOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Answer Ask Shops  Shop Id  Scans  Scan Id  Answer Post"
                 }
               }
             }
@@ -823,6 +893,59 @@
         }
       }
     },
+    "/scans/{scan_id}/ask": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Ask",
+        "description": "She asks for an amount at the counter. Nothing is written: the shopkeeper\nanswers on his screen.",
+        "operationId": "ask_scans__scan_id__ask_post",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/scans/{scan_id}/leave": {
       "post": {
         "tags": [
@@ -960,7 +1083,7 @@
           "customer"
         ],
         "summary": "Dispute",
-        "description": "B1. \"That's not right\".",
+        "description": "B1. \"Not mine\" or \"Wrong amount\".",
         "operationId": "dispute_entries__entry_id__dispute_post",
         "parameters": [
           {
@@ -1316,13 +1439,49 @@
         }
       }
     },
+    "/voice/asked/{paise}.wav": {
+      "get": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Say Asked",
+        "description": "The Soundbox when someone at the counter asks for udhaar: \"दो सौ रुपये का\nउधार माँगा है।\" The amount only: who, and what for, are on his screen.",
+        "operationId": "say_asked_voice_asked__paise__wav_get",
+        "parameters": [
+          {
+            "name": "paise",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Paise"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/voice/received/{paid}/{left}.wav": {
       "get": {
         "tags": [
           "voice"
         ],
         "summary": "Say Received",
-        "description": "The Soundbox when money arrives: \"सौ रुपये मिले, सौ रुपये बाकी।\" Amounts\nonly: this route cannot say a name. 503 when voice is offline and it was never\nspoken; the Soundbox then plays its tone.",
+        "description": "The Soundbox when money arrives: \"दो सौ रुपये का उधार था, उसमें से सौ\nरुपये मिले, सौ रुपये बाकी।\" Amounts only: this route cannot say a name. 503\nwhen voice is offline and it was never spoken; the Soundbox then plays its\ntone.",
         "operationId": "say_received_voice_received__paid___left__wav_get",
         "parameters": [
           {
@@ -1486,6 +1645,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MunshiOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shops/{shop_id}/munshi/{conversation_id}": {
+      "get": {
+        "tags": [
+          "munshi"
+        ],
+        "summary": "History",
+        "description": "A conversation so far, to show again: Paytm Assistant keeps its history.\nHis words (what the mic heard, or what he typed; a tap as Yes or No) and the\nmunshi's replies. Tool calls and results are the model's, not shown.",
+        "operationId": "history_shops__shop_id__munshi__conversation_id__get",
+        "parameters": [
+          {
+            "name": "shop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Shop Id"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MunshiHistoryOut"
                 }
               }
             }
@@ -1738,6 +1949,16 @@
               "type": "string",
               "format": "uuid",
               "title": "Turn Id"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Lang"
             }
           }
         ],
@@ -2107,6 +2328,58 @@
         }
       }
     },
+    "/shops/{shop_id}/entries/{entry_id}/remove": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Remove",
+        "description": "C2. Take back an entry written by mistake: the wrong person, or nothing was\ntaken. Kept, marked removed, claiming nothing; his phone shows it.",
+        "operationId": "remove_shops__shop_id__entries__entry_id__remove_post",
+        "parameters": [
+          {
+            "name": "shop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Shop Id"
+            }
+          },
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/shops/{shop_id}/events": {
       "get": {
         "tags": [
@@ -2342,6 +2615,49 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MyUdhaarOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/people/{person_id}/account": {
+      "get": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "My Account",
+        "description": "His Paytm account: the name on it, its UPI ID and number. Fixed.",
+        "operationId": "my_account_people__person_id__account_get",
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Person Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaytmAccountOut"
                 }
               }
             }
@@ -2699,6 +3015,123 @@
         }
       }
     },
+    "/shops/{shop_id}/reminders/{reminder_id}": {
+      "post": {
+        "tags": [
+          "tonight"
+        ],
+        "summary": "Rewrite",
+        "description": "His own words for tomorrow's reminder, or his own hour for it.",
+        "operationId": "rewrite_shops__shop_id__reminders__reminder_id__post",
+        "parameters": [
+          {
+            "name": "shop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Shop Id"
+            }
+          },
+          {
+            "name": "reminder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Reminder Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReminderEditIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReminderOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shops/{shop_id}/customers/{customer_id}/pause": {
+      "post": {
+        "tags": [
+          "tonight"
+        ],
+        "summary": "Pause",
+        "description": "No reminders to him until the day he chose, and tomorrow's stopped.",
+        "operationId": "pause_shops__shop_id__customers__customer_id__pause_post",
+        "parameters": [
+          {
+            "name": "shop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Shop Id"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PauseIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/shops/{shop_id}/reminders/{reminder_id}/stop": {
       "post": {
         "tags": [
@@ -2847,6 +3280,38 @@
         "title": "AccountOut",
         "description": "The Paytm account behind a number or UPI ID. The number is not kept."
       },
+      "AnswerAskIn": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "change"
+            ],
+            "title": "Answer"
+          },
+          "amount_rupees": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Rupees"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "AnswerAskIn",
+        "description": "His answer on the pop-up: yes, no, or the amount it really is."
+      },
       "AnswerIn": {
         "properties": {
           "text": {
@@ -2915,6 +3380,40 @@
         ],
         "title": "AnswerOut",
         "description": "Who the answer names, or the question again. The amount is the one already\nheard; nothing is recorded yet."
+      },
+      "AskIn": {
+        "properties": {
+          "person_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Person Id"
+          },
+          "amount_rupees": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Rupees"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "person_id",
+          "amount_rupees"
+        ],
+        "title": "AskIn",
+        "description": "She asks for an amount at the counter: whole rupees, and what for."
       },
       "AskOut": {
         "properties": {
@@ -3027,6 +3526,16 @@
             "type": "integer",
             "title": "Outstanding Paise"
           },
+          "waiting_paise": {
+            "type": "integer",
+            "title": "Waiting Paise",
+            "default": 0
+          },
+          "disputed_paise": {
+            "type": "integer",
+            "title": "Disputed Paise",
+            "default": 0
+          },
           "lines": {
             "items": {
               "$ref": "#/components/schemas/LineOut"
@@ -3077,7 +3586,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 40
+                "maxLength": 80
               },
               {
                 "type": "null"
@@ -3141,7 +3650,10 @@
               "udhaar",
               "payment",
               "customer",
-              "correction"
+              "correction",
+              "removal",
+              "details",
+              "message"
             ],
             "title": "Kind"
           },
@@ -3179,7 +3691,10 @@
                 "large",
                 "unusual",
                 "new_customer",
-                "correction"
+                "correction",
+                "removal",
+                "details",
+                "message"
               ]
             },
             "type": "array",
@@ -3206,6 +3721,39 @@
               }
             ],
             "title": "Called"
+          },
+          "change_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Name"
+          },
+          "change_tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Tag"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
           },
           "entry_id": {
             "anyOf": [
@@ -3377,9 +3925,29 @@
             ],
             "title": "Invited At"
           },
+          "paytm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaytmNameOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "balance_paise": {
             "type": "integer",
             "title": "Balance Paise"
+          },
+          "waiting_paise": {
+            "type": "integer",
+            "title": "Waiting Paise",
+            "default": 0
+          },
+          "disputed_paise": {
+            "type": "integer",
+            "title": "Disputed Paise",
+            "default": 0
           },
           "day": {
             "anyOf": [
@@ -3566,6 +4134,15 @@
               }
             ],
             "title": "Reason"
+          },
+          "disputed_as": {
+            "type": "string",
+            "enum": [
+              "not_mine",
+              "wrong_amount"
+            ],
+            "title": "Disputed As",
+            "default": "wrong_amount"
           }
         },
         "type": "object",
@@ -3611,7 +4188,8 @@
               "confirmed",
               "disputed",
               "corrected",
-              "settled"
+              "settled",
+              "removed"
             ],
             "title": "Status"
           },
@@ -3695,6 +4273,7 @@
             "type": "string",
             "enum": [
               "scanned",
+              "asked",
               "confirmed",
               "disputed",
               "paid",
@@ -4133,7 +4712,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 40
+                "maxLength": 80
               },
               {
                 "type": "null"
@@ -4277,6 +4856,16 @@
           "balance_paise": {
             "type": "integer",
             "title": "Balance Paise"
+          },
+          "waiting_paise": {
+            "type": "integer",
+            "title": "Waiting Paise",
+            "default": 0
+          },
+          "disputed_paise": {
+            "type": "integer",
+            "title": "Disputed Paise",
+            "default": 0
           },
           "day": {
             "type": "integer",
@@ -4469,6 +5058,26 @@
           "card": {
             "type": "boolean",
             "title": "Card"
+          },
+          "payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "passbook": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PassbookOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -4482,6 +5091,40 @@
           "card"
         ],
         "title": "MessageOut"
+      },
+      "MunshiHistoryOut": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Conversation Id"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/MunshiLineOut"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CardOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "lines",
+          "card"
+        ],
+        "title": "MunshiHistoryOut",
+        "description": "A conversation so far: his words and the munshi's replies, in order, and\nthe card still waiting for his answer, if one is."
       },
       "MunshiIn": {
         "properties": {
@@ -4510,6 +5153,35 @@
         ],
         "title": "MunshiIn",
         "description": "His words, typed. No conversation_id: a new conversation."
+      },
+      "MunshiLineOut": {
+        "properties": {
+          "who": {
+            "type": "string",
+            "enum": [
+              "you",
+              "munshi"
+            ],
+            "title": "Who"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "who",
+          "text",
+          "at"
+        ],
+        "title": "MunshiLineOut",
+        "description": "One line of a conversation so far, as the screen shows it."
       },
       "MunshiOut": {
         "properties": {
@@ -4614,6 +5286,11 @@
             "type": "integer",
             "title": "Balance Paise"
           },
+          "waiting_paise": {
+            "type": "integer",
+            "title": "Waiting Paise",
+            "default": 0
+          },
           "payable_paise": {
             "type": "integer",
             "title": "Payable Paise"
@@ -4665,6 +5342,16 @@
             "type": "string",
             "title": "Person Id"
           },
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaytmAccountOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "total_paise": {
             "type": "integer",
             "title": "Total Paise"
@@ -4706,7 +5393,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 40
+                "maxLength": 80
               },
               {
                 "type": "null"
@@ -4775,6 +5462,25 @@
           "elsewhere"
         ],
         "title": "PaidOut"
+      },
+      "PassbookOut": {
+        "properties": {
+          "before_paise": {
+            "type": "integer",
+            "title": "Before Paise"
+          },
+          "after_paise": {
+            "type": "integer",
+            "title": "After Paise"
+          }
+        },
+        "type": "object",
+        "required": [
+          "before_paise",
+          "after_paise"
+        ],
+        "title": "PassbookOut",
+        "description": "What he had agreed he owes just before this moment, and just after: the\nthread read as a passbook (domain/passbook.py)."
       },
       "PatternOut": {
         "properties": {
@@ -4930,6 +5636,20 @@
         "title": "PatternOut",
         "description": "How he pays, from his own book (domain/pattern.py)."
       },
+      "PauseIn": {
+        "properties": {
+          "until": {
+            "type": "string",
+            "format": "date",
+            "title": "Until"
+          }
+        },
+        "type": "object",
+        "required": [
+          "until"
+        ],
+        "title": "PauseIn"
+      },
       "PayIn": {
         "properties": {
           "person_id": {
@@ -4956,6 +5676,72 @@
         ],
         "title": "PayIn",
         "description": "He pays this shop by UPI: what he owes it, or the part he chose."
+      },
+      "PaymentOut": {
+        "properties": {
+          "amount_paise": {
+            "type": "integer",
+            "title": "Amount Paise"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "upi",
+              "cash"
+            ],
+            "title": "Method"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount_paise",
+          "method"
+        ],
+        "title": "PaymentOut",
+        "description": "A payment, as its own card in the thread."
+      },
+      "PaytmAccountOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "upi": {
+            "type": "string",
+            "title": "Upi"
+          },
+          "phone": {
+            "type": "string",
+            "title": "Phone"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "upi",
+          "phone"
+        ],
+        "title": "PaytmAccountOut",
+        "description": "His own Paytm account, as his phone shows it. Fixed: nobody changes these\nin BAHI."
+      },
+      "PaytmNameOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "upi": {
+            "type": "string",
+            "title": "Upi"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "upi"
+        ],
+        "title": "PaytmNameOut",
+        "description": "What the shop sees of someone's Paytm account: never the number."
       },
       "PersonIn": {
         "properties": {
@@ -5232,6 +6018,38 @@
         "title": "RecordIn",
         "description": "An udhaar entry. Either a scan (he is at the counter) or a customer."
       },
+      "ReminderEditIn": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          }
+        },
+        "type": "object",
+        "title": "ReminderEditIn",
+        "description": "His own words for it, or his own hour (HH:MM, IST), or both."
+      },
       "ReminderOut": {
         "properties": {
           "id": {
@@ -5251,7 +6069,8 @@
             "type": "string",
             "enum": [
               "munshi",
-              "words"
+              "words",
+              "shop"
             ],
             "title": "Written"
           },
@@ -5369,7 +6188,8 @@
               "waiting",
               "recorded",
               "left",
-              "expired"
+              "expired",
+              "declined"
             ],
             "title": "State"
           },
@@ -5382,6 +6202,33 @@
                 "type": "null"
               }
             ]
+          },
+          "asked_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asked Paise"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "changed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
           }
         },
         "type": "object",
@@ -5483,7 +6330,8 @@
               "confirmed",
               "disputed",
               "corrected",
-              "settled"
+              "settled",
+              "removed"
             ],
             "title": "Status"
           },
@@ -5536,6 +6384,33 @@
               }
             ],
             "title": "Disputed At"
+          },
+          "disputed_as": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "not_mine",
+                  "wrong_amount"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disputed As"
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed At"
           },
           "acknowledged_at": {
             "anyOf": [
@@ -5657,6 +6532,16 @@
           "balance_paise": {
             "type": "integer",
             "title": "Balance Paise"
+          },
+          "waiting_paise": {
+            "type": "integer",
+            "title": "Waiting Paise",
+            "default": 0
+          },
+          "disputed_paise": {
+            "type": "integer",
+            "title": "Disputed Paise",
+            "default": 0
           },
           "day": {
             "anyOf": [
@@ -5856,6 +6741,28 @@
           "first_time": {
             "type": "boolean",
             "title": "First Time"
+          },
+          "asked_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asked Paise"
+          },
+          "asked_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asked Note"
           }
         },
         "type": "object",

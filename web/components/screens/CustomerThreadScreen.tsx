@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Composer } from "@/components/chat/Composer";
-import { ThreadView } from "@/components/chat/Thread";
+import { Owes } from "@/components/chat/Owes";
+import { type DisputedAs, ThreadView } from "@/components/chat/Thread";
 import { CustomerShell } from "@/components/shell/Shell";
 import { Dots, Notice } from "@/components/ui/Notice";
 import { api, ApiError, usePoll } from "@/lib/api/client";
@@ -17,7 +18,7 @@ import { tone, unlock } from "@/lib/soundbox";
  *
  * An entry waiting for him carries its two answers: "Yes, I owe ₹200" (the
  * button's words come from the server, because they are what is stored) and
- * "That's not right", with his reason if he gives one. A correction from the
+ * "Not mine" or "Wrong amount", with his reason if he gives one. A correction from the
  * shop is a new card, and needs its own yes. Pay, beside the message box, opens
  * the payment screen with what he owes here filled in.
  */
@@ -61,9 +62,14 @@ export function CustomerThreadScreen({ shopId }: { shopId: string }): React.Reac
       () => api<Entry>(`/entries/${e.id}/confirm`, { person_id: person?.id }),
       "Couldn't send your yes.",
     );
-  const dispute = (e: ThreadEntry, reason: string): void =>
+  const dispute = (e: ThreadEntry, reason: string, as: DisputedAs): void =>
     void act(
-      () => api<Entry>(`/entries/${e.id}/dispute`, { person_id: person?.id, reason: reason || null }),
+      () =>
+        api<Entry>(`/entries/${e.id}/dispute`, {
+          person_id: person?.id,
+          reason: reason || null,
+          disputed_as: as,
+        }),
       "Couldn't tell the shop.",
     );
 
@@ -71,6 +77,15 @@ export function CustomerThreadScreen({ shopId }: { shopId: string }): React.Reac
     title: t?.shop.name ?? "…",
     sub: t ? `${t.shop.locality} · Business` : undefined,
     back: "/c/udhaar",
+    avatar: t?.shop.name,
+    below: t ? (
+      <Owes
+        label={`You owe ${t.shop.name}`}
+        owed={t.balance_paise}
+        waiting={t.waiting_paise ?? 0}
+        disputed={t.disputed_paise ?? 0}
+      />
+    ) : undefined,
   };
 
   if (person === null) {
@@ -107,9 +122,9 @@ export function CustomerThreadScreen({ shopId }: { shopId: string }): React.Reac
             t.balance_paise > 0 ? (
               <Link
                 href={`/c/pay/${shopId}`}
-                className="flex-none rounded-pill bg-cyan px-4 py-2 text-[13.5px] font-extrabold text-white"
+                className="flex-none rounded-pill bg-cyan px-4 py-2.5 text-[13.5px] font-extrabold text-white"
               >
-                Pay
+                Pay Securely
               </Link>
             ) : null
           }

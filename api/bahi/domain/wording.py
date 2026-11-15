@@ -22,6 +22,13 @@ def acknowledgment(amount_paise: int, shop_name: str) -> str:
     return f"{button(amount_paise)} to {shop_name}"
 
 
+def asked(amount_paise: int, shop_name: str) -> str:
+    """What her ask is stored as, when the shopkeeper writes exactly that: her own
+    words of acknowledgment. Never her note: that is what it was for, and a note
+    could carry a date ("pay by Friday"), which an acknowledgment must not."""
+    return f"I'm taking {rupees(amount_paise)} udhaar from {shop_name}"
+
+
 # ── what BAHI writes in a thread ─────────────────────────────────────────────
 #
 # BAHI's own lines: the entry card's caption, and a short line when something
@@ -37,8 +44,14 @@ def corrected(shop_name: str, amount_paise: int) -> str:
     return f"Corrected by {shop_name} to {rupees(amount_paise)}."
 
 
-def disputed(customer_name: str, amount_paise: int) -> str:
-    return f"{customer_name} says {rupees(amount_paise)} is not right."
+def disputed(customer_name: str, amount_paise: int, disputed_as: str) -> str:
+    if disputed_as == "not_mine":
+        return f"{customer_name} says {rupees(amount_paise)} is not theirs."
+    return f"{customer_name} says {rupees(amount_paise)} is not the right amount."
+
+
+def removed(shop_name: str, amount_paise: int) -> str:
+    return f"{shop_name} took back {rupees(amount_paise)}. Nothing to pay for it."
 
 
 def paid(amount_paise: int, method: str, left_paise: int | None = None) -> str:

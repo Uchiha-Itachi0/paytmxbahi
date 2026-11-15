@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Composer } from "@/components/chat/Composer";
+import { Owes } from "@/components/chat/Owes";
 import { ThreadView } from "@/components/chat/Thread";
 import { MerchantShell } from "@/components/shell/Shell";
 import { Dots, Notice } from "@/components/ui/Notice";
@@ -66,6 +67,16 @@ export function ShopThreadScreen({ customerId }: { customerId: string }): React.
     }
   }
 
+  async function remove(entryId: string): Promise<void> {
+    setProblem(null);
+    try {
+      await api(`/shops/${SHOP_ID}/entries/${entryId}/remove`, {});
+      thread.refresh();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : "Couldn't take it back.");
+    }
+  }
+
   const sub = t
     ? [t.tag, t.day !== null && t.balance_paise > 0 ? `day ${t.day}` : null]
         .filter(Boolean)
@@ -79,6 +90,15 @@ export function ShopThreadScreen({ customerId }: { customerId: string }): React.
         title: t?.display_name ?? "…",
         sub,
         back: "/m/messages",
+        avatar: t?.display_name,
+        below: t ? (
+          <Owes
+            label={`${t.display_name} owes you`}
+            owed={t.balance_paise}
+            waiting={t.waiting_paise ?? 0}
+            disputed={t.disputed_paise ?? 0}
+          />
+        ) : undefined,
         action: (
           <Link
             href={`/m/customers/${customerId}`}
@@ -102,7 +122,10 @@ export function ShopThreadScreen({ customerId }: { customerId: string }): React.
           side="shop"
           name={t.display_name}
           shop={t.shop.name}
-          actions={{ onCorrect: (e, paise) => void correct(e.id, paise) }}
+          actions={{
+            onCorrect: (e, paise) => void correct(e.id, paise),
+            onRemove: (e) => void remove(e.id),
+          }}
         />
       ) : thread.error ? (
         <Notice tone="warn">Cannot reach this thread: {thread.error}</Notice>

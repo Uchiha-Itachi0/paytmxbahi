@@ -8,6 +8,7 @@ from bahi import clock, voice
 from bahi.service import ledger, views
 from bahi.service.deps import Con, etagged
 from bahi.service.models import (
+    AskIn,
     DisputeIn,
     EntryOut,
     JoinIn,
@@ -42,8 +43,25 @@ def get_scan(scan_id: str, request: Request, con: Con) -> Response:
         scan_id=s.id,
         state=s.state(clock.now()),
         entry=views.entry_out(e) if e else None,
+        asked_paise=s.asked_paise,
+        answer=s.answer,  # type: ignore[arg-type]
     )
     return etagged(request, body)
+
+
+@router.post("/scans/{scan_id}/ask", response_model=ScanOut)
+def ask(scan_id: str, body: AskIn, con: Con) -> ScanOut:
+    """She asks for an amount at the counter. Nothing is written: the shopkeeper
+    answers on his screen."""
+    now = clock.now()
+    s = ledger.ask(con, scan_id, body.person_id, body.amount_rupees * 100, body.note, now)
+    return ScanOut(
+        scan_id=s.id,
+        state=s.state(now),
+        entry=None,
+        asked_paise=s.asked_paise,
+        answer=None,
+    )
 
 
 @router.post("/scans/{scan_id}/leave", status_code=204)
@@ -65,6 +83,8 @@ def confirm(entry_id: str, body: PersonIn, con: Con) -> EntryOut:
 
 @router.post("/entries/{entry_id}/dispute")
 def dispute(entry_id: str, body: DisputeIn, con: Con) -> EntryOut:
-    """B1. "That's not right"."""
-    e = ledger.dispute(con, entry_id, body.person_id, body.reason, clock.now())
+    """B1. "Not mine" or "Wrong amount"."""
+    e = ledger.dispute(
+        con, entry_id, body.person_id, body.reason, clock.now(), body.disputed_as
+    )
     return views.entry_out(e)

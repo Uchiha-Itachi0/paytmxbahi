@@ -18,7 +18,7 @@ import type {
   Remembered,
   ThreadEntry,
 } from "@/lib/api/types";
-import { SHOP_ID } from "@/lib/config";
+import { NAME_CHARS, SHOP_ID, TAG_CHARS } from "@/lib/config";
 import { formatPaise } from "@/lib/money";
 import { fullDate, shortDate } from "@/lib/when";
 
@@ -294,14 +294,34 @@ export function CustomerScreen({ customerId }: { customerId: string }): React.Re
                     ? "Invite sent · waiting for their yes"
                     : "Name only · no phone, nothing reaches them"}
             </p>
+            {c.paytm ? (
+              <p className="mt-0.5 truncate text-[12px] font-medium text-sub">
+                Paytm: {c.paytm.name} · {c.paytm.upi}
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="mt-4">
           <Figure
-            label="Owes you"
+            label="Owes you · agreed"
             value={formatPaise(c.balance_paise)}
             fine={c.balance_paise && c.day !== null ? `day ${c.day}` : undefined}
           />
+          {(c.waiting_paise ?? 0) > 0 || (c.disputed_paise ?? 0) > 0 ? (
+            <p className="mt-1 text-[12px] font-semibold text-sub">
+              Not counted:{" "}
+              {[
+                (c.waiting_paise ?? 0) > 0
+                  ? `${formatPaise(c.waiting_paise ?? 0)} waiting for their yes`
+                  : null,
+                (c.disputed_paise ?? 0) > 0
+                  ? `${formatPaise(c.disputed_paise ?? 0)} they say is wrong`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          ) : null}
         </div>
         {c.joined === "linked" ? (
           <div className="mt-3.5">
@@ -401,8 +421,10 @@ export function CustomerScreen({ customerId }: { customerId: string }): React.Re
 
       <Card title="How you know them" tight>
         <div className="flex flex-col gap-3">
-          <Field label="Name" value={name} onChange={setName} />
-          <Field label="Where they live or work" value={tag} onChange={setTag} placeholder="Room 12, C wing" />
+          <Field label="Name" value={name} onChange={setName}
+                maxLength={NAME_CHARS} />
+          <Field label="Where they live or work" value={tag} onChange={setTag}
+                maxLength={TAG_CHARS} placeholder="Room 12, C wing" />
           <Pill
             tone="outline"
             onClick={() =>

@@ -10,15 +10,17 @@ purity test needs no exceptions.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from bahi.domain.book import Chip, Joined
+from bahi.domain.book import TAG_CHARS, Chip, Joined
 
-EntryStatus = Literal["recorded", "confirmed", "disputed", "corrected", "settled"]
+EntryStatus = Literal[
+    "recorded", "confirmed", "disputed", "corrected", "settled", "removed"
+]
 
 
 class ShopOut(BaseModel):
@@ -39,7 +41,12 @@ class LineOut(BaseModel):
     display_name: str
     tag: str | None
     joined: Joined
+    #: What he has agreed he owes.
     balance_paise: int
+    #: On his phone, waiting for his yes; not in the balance.
+    waiting_paise: int = 0
+    #: He said it is wrong; not in the balance.
+    disputed_paise: int = 0
     day: int
     chip: Chip
     rhythm: RhythmOut
@@ -49,7 +56,12 @@ class BookOut(BaseModel):
     customer_count: int
     invited_count: int
     owing_count: int
+    #: What customers have agreed they owe.
     outstanding_paise: int
+    #: Written, waiting for customers' yes; not in outstanding.
+    waiting_paise: int = 0
+    #: Customers said these are wrong; not in outstanding.
+    disputed_paise: int = 0
     lines: list[LineOut]
 
 
@@ -84,6 +96,10 @@ class WaitingOut(BaseModel):
     #: disagree with the product's (the demo pins the date), so it never does this sum.
     waited_s: int
     first_time: bool
+    #: She asked for this much, and he hasn't answered: the pop-up asks him.
+    asked_paise: int | None = None
+    #: What for, in her words.
+    asked_note: str | None = None
 
 
 class CounterOut(BaseModel):
@@ -138,17 +154,54 @@ class JoinOut(BaseModel):
 
 class ScanOut(BaseModel):
     scan_id: str
-    state: Literal["waiting", "recorded", "left", "expired"]
+    state: Literal["waiting", "recorded", "left", "expired", "declined"]
     entry: EntryOut | None
+    #: What she asked for, if she did, and the shop's answer once it gives one.
+    asked_paise: int | None = None
+    answer: Literal["yes", "no", "changed"] | None = None
+
+
+class AskIn(BaseModel):
+    """She asks for an amount at the counter: whole rupees, and what for."""
+
+    person_id: UUID
+    amount_rupees: int = Field(gt=0, le=1_00_000)
+    note: str | None = Field(default=None, max_length=80)
+
+
+class AnswerAskIn(BaseModel):
+    """His answer on the pop-up: yes, no, or the amount it really is."""
+
+    answer: Literal["yes", "no", "change"]
+    #: Only with change.
+    amount_rupees: int | None = Field(default=None, gt=0, le=1_00_000)
 
 
 class PersonIn(BaseModel):
     person_id: UUID
 
 
+class PaytmAccountOut(BaseModel):
+    """His own Paytm account, as his phone shows it. Fixed: nobody changes these
+    in BAHI."""
+
+    name: str
+    upi: str
+    phone: str
+
+
+class PaytmNameOut(BaseModel):
+    """What the shop sees of someone's Paytm account: never the number."""
+
+    name: str
+    upi: str
+
+
 class DisputeIn(BaseModel):
     person_id: UUID
     reason: str | None = Field(default=None, max_length=280)
+    #: Not his at all, or the wrong amount.
+    disputed_as: Literal["not_mine", "wrong_amount"] = "wrong_amount"
 
 
 # ── voice ────────────────────────────────────────────────────────────────────
@@ -280,7 +333,7 @@ class CardEditIn(BaseModel):
     amount_rupees: int | None = Field(default=None, gt=0, le=1_00_000)
     #: Only for someone new to the book.
     new_name: str | None = Field(default=None, min_length=1, max_length=40)
-    new_tag: str | None = Field(default=None, max_length=40)
+    new_tag: str | None = Field(default=None, max_length=TAG_CHARS)
 
 
 class CardOut(BaseModel):
@@ -295,8 +348,12 @@ class CardOut(BaseModel):
     #: None on a card that only adds someone.
     amount_paise: int | None
     #: customer: only adds someone new to the book, by name. correction: the
-    #: right amount for an entry already written.
-    kind: Literal["udhaar", "payment", "customer", "correction"]
+    #: right amount for an entry already written. removal: takes an entry back
+    #: (amount_paise is what it said). details: his name or description.
+    #: message: words to send him.
+    kind: Literal[
+        "udhaar", "payment", "customer", "correction", "removal", "details", "message"
+    ]
     #: A correction: what the entry said.
     corrects_amount_paise: int | None = None
     #: Someone not in the book yet: his yes adds them, by name only.
@@ -312,12 +369,20 @@ class CardOut(BaseModel):
             "unusual",
             "new_customer",
             "correction",
+            "removal",
+            "details",
+            "message",
         ]
     ]
     #: What he said, shown under the amount.
     spoken_text: str | None
     #: The name he used for them, not the book's: his yes remembers it.
     called: str | None = None
+    #: A details card: the new name and description (None: unchanged).
+    change_name: str | None = None
+    change_tag: str | None = None
+    #: A message card: the words to send.
+    message: str | None = None
     entry_id: UUID | None
     #: The customer has BAHI on his phone, so a saved entry reaches it.
     on_bahi: bool
@@ -339,6 +404,23 @@ class MunshiOut(BaseModel):
     finished: bool
 
 
+class MunshiLineOut(BaseModel):
+    """One line of a conversation so far, as the screen shows it."""
+
+    who: Literal["you", "munshi"]
+    text: str
+    at: datetime
+
+
+class MunshiHistoryOut(BaseModel):
+    """A conversation so far: his words and the munshi's replies, in order, and
+    the card still waiting for his answer, if one is."""
+
+    conversation_id: UUID
+    lines: list[MunshiLineOut]
+    card: CardOut | None
+
+
 # ── chat (V5) ────────────────────────────────────────────────────────────────
 
 
@@ -355,6 +437,10 @@ class ThreadEntryOut(BaseModel):
     corrects_entry_id: str | None
     corrects_amount_paise: int | None
     disputed_at: datetime | None
+    #: What he said is wrong with it.
+    disputed_as: Literal["not_mine", "wrong_amount"] | None = None
+    #: The shop took it back.
+    removed_at: datetime | None = None
     acknowledged_at: datetime | None
     last_paid_at: datetime | None
     last_method: Literal["upi", "cash"] | None
@@ -362,6 +448,21 @@ class ThreadEntryOut(BaseModel):
     expired: bool
     #: The confirm button's words, for the customer's side.
     button: str
+
+
+class PaymentOut(BaseModel):
+    """A payment, as its own card in the thread."""
+
+    amount_paise: int
+    method: Literal["upi", "cash"]
+
+
+class PassbookOut(BaseModel):
+    """What he had agreed he owes just before this moment, and just after: the
+    thread read as a passbook (domain/passbook.py)."""
+
+    before_paise: int
+    after_paise: int
 
 
 class MessageOut(BaseModel):
@@ -374,6 +475,10 @@ class MessageOut(BaseModel):
     #: The entry's first message draws its card; later ones about the same entry
     #: (a dispute, a payment) are one line.
     card: bool
+    #: A payment: drawn as its own card, not a line.
+    payment: PaymentOut | None = None
+    #: An entry's card, from the moment it counted; a payment, at its moment.
+    passbook: PassbookOut | None = None
 
 
 class ThreadOut(BaseModel):
@@ -389,6 +494,10 @@ class ThreadOut(BaseModel):
     tag: str | None
     joined: Joined
     balance_paise: int
+    #: Waiting for his yes; not in the balance.
+    waiting_paise: int = 0
+    #: He said it is wrong; not in the balance.
+    disputed_paise: int = 0
     #: Days since he last paid, when he owes something.
     day: int | None
     messages: list[MessageOut]
@@ -449,6 +558,8 @@ class MyShopOut(BaseModel):
     #: What the shop calls him.
     display_name: str
     balance_paise: int
+    #: Waiting for his yes; not in the balance.
+    waiting_paise: int = 0
     #: What he can pay now: his balance less anything he says is wrong.
     payable_paise: int
     #: Days since he last paid here, when he owes something.
@@ -469,6 +580,8 @@ class InviteOut(BaseModel):
 class MyUdhaarOut(BaseModel):
     today: date
     person_id: str
+    #: His Paytm account, once he has scanned somewhere.
+    account: PaytmAccountOut | None = None
     total_paise: int
     #: Every shop whose book he is in, the ones he owes first.
     shops: list[MyShopOut]
@@ -526,7 +639,7 @@ class AccountOut(BaseModel):
 class InviteIn(BaseModel):
     #: A mobile number or UPI ID, looked up again here and never stored.
     query: str = Field(min_length=3, max_length=60)
-    tag: str | None = Field(default=None, max_length=40)
+    tag: str | None = Field(default=None, max_length=TAG_CHARS)
     #: The name to keep him under, when Paytm didn't give one.
     display_name: str | None = Field(default=None, min_length=1, max_length=40)
 
@@ -547,7 +660,13 @@ class CustomerDetailOut(BaseModel):
     joined: Joined
     invite_pending: bool
     invited_at: datetime | None
+    #: The name and UPI ID on his Paytm account, if he is on BAHI.
+    paytm: PaytmNameOut | None = None
     balance_paise: int
+    #: Waiting for his yes; not in the balance.
+    waiting_paise: int = 0
+    #: He said it is wrong; not in the balance.
+    disputed_paise: int = 0
     day: int | None
     #: Newest first: everything open, then the latest paid.
     entries: list[ThreadEntryOut]
@@ -608,7 +727,7 @@ class MemoryIn(BaseModel):
 
 class NameOnlyIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=40)
-    tag: str | None = Field(default=None, max_length=40)
+    tag: str | None = Field(default=None, max_length=TAG_CHARS)
 
 
 # ── Tonight (V4) ─────────────────────────────────────────────────────────────
@@ -640,8 +759,21 @@ class ReminderOut(BaseModel):
     send_at: datetime
     body: str
     #: munshi: Sarvam's model wrote it, and it passed our checks. words: ours.
-    written: Literal["munshi", "words"]
+    #: shop: the shopkeeper rewrote it.
+    written: Literal["munshi", "words", "shop"]
     status: Literal["planned", "stopped", "sent"]
+
+
+class ReminderEditIn(BaseModel):
+    """His own words for it, or his own hour (HH:MM, IST), or both."""
+
+    body: str | None = Field(default=None, min_length=1, max_length=300)
+    at: time | None = None
+
+
+class PauseIn(BaseModel):
+    #: The last day with no reminder.
+    until: date
 
 
 class PlanOut(BaseModel):
@@ -681,7 +813,7 @@ class EventOut(BaseModel):
     """Something the shop should hear about. The Soundbox plays a tone, or says
     an amount; it never says a name. The screen shows who."""
 
-    kind: Literal["scanned", "confirmed", "disputed", "paid", "message"]
+    kind: Literal["scanned", "asked", "confirmed", "disputed", "paid", "message"]
     at: datetime
     customer_id: str
     display_name: str

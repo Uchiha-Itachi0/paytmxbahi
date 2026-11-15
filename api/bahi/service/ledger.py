@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from uuid import UUID
 
-from bahi import voice
+from bahi import paytm, voice
 from bahi.domain import book as book_domain
 from bahi.domain import wording
 from bahi.domain.book import OPEN
@@ -91,10 +91,26 @@ def record(
     if c.joined == "invited":
         raise Conflict(f"{c.display_name} has not accepted your invite yet")
 
+    # She asked for an amount on this scan: whatever he writes answers it. Her
+    # note goes on the entry unless he wrote one of his own.
+    asking = sc is not None and sc.asking
+    if asking and sc is not None and note is None:
+        note = sc.asked_note
     eid = entries.record(con, cid, amount_paise, now, note=note, spoken_text=spoken_text)
     if sc is not None and not scans.claim(con, sc.id, eid, now):
         raise Conflict("that scan was already used, or has expired")
     e = entry(con, eid)
+    if asking and sc is not None:
+        if amount_paise == sc.asked_paise:
+            # Exactly what she asked for: her ask is her yes, so it is agreed by
+            # both now, stored in her own words.
+            scans.answer(con, sc.id, "yes", now)
+            entries.acknowledge(con, e.id, wording.asked(amount_paise, e.shop_name), now)
+            entries.set_status(con, e.id, move(e.status, "confirm"))
+            e = entry(con, eid)
+        else:
+            # A different amount: an ordinary entry, for her own yes.
+            scans.answer(con, sc.id, "changed", now)
     _card(con, e, wording.recorded(e.shop_name, amount_paise), now)
     return e
 
@@ -159,8 +175,28 @@ def correct(
     return new
 
 
+def remove(con: Conn, shop_id: str, entry_id: str, now: datetime) -> EntryRef:
+    """Take back an entry that should never have been written: the wrong person,
+    or nothing was taken. Kept, marked removed, counting for nothing; his phone
+    shows it was taken back. Refused once anything is paid against it (the
+    payment names it), like a correction."""
+    e = entry(con, entry_id)
+    if e.shop_id != shop_id:
+        raise NotFound(f"no entry {entry_id} at this shop")
+    if e.paid_paise > 0:
+        raise Conflict(
+            "part of this entry is already paid, so it can't be taken back; "
+            "record a correction for the rest instead"
+        )
+    status = move(e.status, "remove")
+    entries.remove(con, e.id, now)
+    assert status == "removed"
+    _card(con, e, wording.removed(e.shop_name, e.amount_paise), now)
+    return entry(con, e.id)
+
+
 def balance(con: Conn, shop_id: str, customer_id: str, today: date) -> int:
-    """What he owes this shop, as the book counts it."""
+    """What he has agreed he owes this shop, as the book counts it."""
     found = book_store.load(con, shop_id, customer_id)
     ln = book_domain.line(found[0], today) if found else None
     return ln.balance_paise if ln else 0
@@ -271,9 +307,18 @@ def pay_cash(con: Conn, customer_id: str, amount_paise: int, now: datetime) -> l
         paid.append(e.id)
     if paid:
         last = entry(con, paid[-1])
-        left = balance(con, last.shop_id, customer_id, today)
-        _card(con, last, wording.paid(amount_paise, "cash", left), now)
+        _card(
+            con,
+            last,
+            wording.paid(amount_paise, "cash", left_to_pay(con, customer_id, today)),
+            now,
+        )
     return paid
+
+
+def left_to_pay(con: Conn, customer_id: str, today: date) -> int:
+    """What he can still pay: agreed or waiting for his yes, not disputed."""
+    return sum(e.amount_paise - e.paid_paise for e in payable(con, customer_id, today))
 
 
 # ── the customer ─────────────────────────────────────────────────────────────
@@ -316,6 +361,9 @@ def join(
     if c is None:
         if not name:
             raise Conflict("first visit to this shop: tell us the name to use")
+        # His Paytm account, made on his first scan anywhere; after that the name
+        # on it, its number and its UPI ID never change.
+        paytm.sign_up(con, pid, name, now)
         customers.add(
             con,
             shop_id,
@@ -334,6 +382,61 @@ def join(
     first = created or not entries.of_customer(con, c.id)
     scan_id = scans.waiting_for(con, c.id, now) or scans.add(con, c.id, now)
     return Joined(customer=c, scan_id=scan_id, first_time=first)
+
+
+#: The most a customer can ask for at the counter, as the munshi's own limit.
+MOST_ASKED_PAISE = 1_00_000_00
+
+
+def ask(
+    con: Conn,
+    scan_id: str,
+    person_id: UUID,
+    amount_paise: int,
+    note: str | None,
+    now: datetime,
+) -> Scan:
+    """She asks for an amount on her scan: "₹200, atta and oil". Nothing is
+    written; the shopkeeper is asked. Whole rupees only."""
+    sc = scan(con, scan_id)
+    c = customers.get(con, sc.customer_id)
+    if c is None or c.person_id != str(person_id):
+        raise Forbidden("this scan is someone else's")
+    if amount_paise % 100 or not 0 < amount_paise <= MOST_ASKED_PAISE:
+        raise Conflict("ask for whole rupees, up to ₹1,00,000")
+    note = " ".join((note or "").split()) or None
+    if not scans.ask(con, sc.id, amount_paise, note, now):
+        raise Conflict(
+            "the shop has already answered, or you are no longer at the counter"
+        )
+    return scan(con, sc.id)
+
+
+def answer_ask(
+    con: Conn,
+    shop_id: str,
+    scan_id: str,
+    said: str,
+    now: datetime,
+    amount_paise: int | None = None,
+) -> EntryRef | None:
+    """His answer to her ask, from the pop-up. Yes writes exactly what she asked
+    for, agreed by both. No writes nothing. A different amount is an ordinary
+    entry she confirms. Yes and a change go through `record`, like every entry."""
+    sc = scan(con, scan_id)
+    if sc.shop_id != shop_id:
+        raise NotFound(f"no scan {scan_id} at this shop")
+    if not sc.asking or sc.asked_paise is None:
+        raise Conflict("there is nothing waiting for your answer on this scan")
+    if said == "no":
+        if not scans.answer(con, sc.id, "no", now):
+            raise Conflict("this was already answered")
+        return None
+    if said == "yes":
+        amount_paise = sc.asked_paise
+    if amount_paise is None:
+        raise Conflict("say the amount it should be")
+    return record(con, shop_id, amount_paise, now, scan_id=UUID(sc.id))
 
 
 def leave(con: Conn, scan_id: str, now: datetime) -> None:
@@ -360,13 +463,19 @@ def confirm(con: Conn, entry_id: str, person_id: UUID, now: datetime) -> EntryRe
 
 
 def dispute(
-    con: Conn, entry_id: str, person_id: UUID, reason: str | None, now: datetime
+    con: Conn,
+    entry_id: str,
+    person_id: UUID,
+    reason: str | None,
+    now: datetime,
+    disputed_as: str = "wrong_amount",
 ) -> EntryRef:
-    """He tapped "That's not right". The entry stays, marked disputed."""
+    """He tapped "Not mine" or "Wrong amount". The entry stays, marked disputed,
+    with which he said; the shop removes it or corrects it."""
     e = mine(con, entry_id, person_id)
     move(e.status, "dispute")  # refuses anything but a recorded entry
-    entries.dispute(con, e.id, now)
-    _card(con, e, wording.disputed(e.display_name, e.amount_paise), now)
+    entries.dispute(con, e.id, now, disputed_as)
+    _card(con, e, wording.disputed(e.display_name, e.amount_paise, disputed_as), now)
     if reason and reason.strip():
         # His reason is his own words in the thread, just after BAHI's line.
         threads.post(
