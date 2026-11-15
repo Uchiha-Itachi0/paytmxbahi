@@ -4,7 +4,7 @@
 # them on a tool that changed its output overnight.
 
 .PHONY: help db db-migrate db-check rhythm decide expire voice voice-list \
-        api web check lint typecheck test
+        api web web-check check lint typecheck test
 
 help:
 	@echo "db           drop, migrate and seed. one shop, 60 udhaar customers, 6 months"
@@ -22,14 +22,17 @@ help:
 	@echo "voice-list   what is already in the offline cache"
 	@echo ""
 	@echo "check        ruff, ruff format, mypy strict, pytest"
+	@echo "web-check    tsc, eslint, vitest"
 
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
-# Drops the schema and rebuilds from scratch. Safe by design: the seed is
-# deterministic, so there is never anything in here worth preserving.
+# Drops the schema and rebuilds from scratch, then writes contract/shop.json from
+# what it built. Safe by design: the seed is deterministic, so there is never
+# anything in here worth preserving. Creates the database on a fresh machine.
 db:
+	@createdb bahi 2>/dev/null || true
 	cd api && uv run python -m data.migrate --reset
 	cd api && uv run python -m data.generate
 
@@ -67,6 +70,11 @@ api:
 
 web:
 	npm --prefix web run dev
+
+# Types, lint, and the tests that hold the UI to its rules: no amount typed
+# into a screen, no shaming words, no colour outside globals.css.
+web-check:
+	npm --prefix web run check
 
 # ---------------------------------------------------------------------------
 # Voice
