@@ -145,3 +145,116 @@ class PersonIn(BaseModel):
 class DisputeIn(BaseModel):
     person_id: UUID
     reason: str | None = Field(default=None, max_length=280)
+
+
+# ── voice ────────────────────────────────────────────────────────────────────
+
+
+class HeardIn(BaseModel):
+    """What the shopkeeper said, typed or tapped instead of spoken."""
+
+    text: str = Field(min_length=1, max_length=200)
+    #: What he said before, when this answers "कितने रुपये?" or "उधार या जमा?":
+    #: "Sharma ko", then "do sau", is read as one sentence.
+    before: str | None = Field(default=None, max_length=400)
+
+
+class PersonOut(BaseModel):
+    customer_id: str
+    display_name: str
+    #: Room, wing or work: how the shopkeeper tells two Anubhavs apart.
+    tag: str | None
+    #: His scan, if he is at the counter: the entry should use it.
+    scan_id: str | None
+
+
+class PickedOut(BaseModel):
+    kind: Literal["picked"] = "picked"
+    #: Why him: the only one waiting, the words fit him at the counter, or in the book.
+    how: Literal["only_one", "at_counter", "in_book"]
+    person: PersonOut
+
+
+class AskOut(BaseModel):
+    kind: Literal["ask"] = "ask"
+    #: who: several waiting, no name. nobody: nobody waiting, no name.
+    #: several: the words fit more than one. maybe: only a weak match, offered.
+    #: not_found: the words fit nobody. not_said: the reader quoted words not said.
+    why: Literal["who", "nobody", "several", "maybe", "not_found", "not_said"]
+    among: list[PersonOut]
+
+
+class ReadbackOut(BaseModel):
+    """The amount said back. Never a name: the Soundbox says only the amount."""
+
+    roman: str
+    devanagari: str
+
+
+class CheckOut(BaseModel):
+    """One check our code made on the reading."""
+
+    kind: Literal["amount_said", "amount_read", "person_said", "person_fits"]
+    ok: bool
+    #: The check, in the shopkeeper's words.
+    says: str
+
+
+#: typed; sarvam (live); sarvam_cached (Sarvam heard this recording before);
+#: clip_script (a demo clip not yet run through Sarvam: its script, not a transcript)
+HeardSource = Literal["typed", "sarvam", "sarvam_cached", "clip_script"]
+
+
+class HeardOut(BaseModel):
+    """What was heard, what read it, and what our checks made of it. Nothing is
+    recorded yet."""
+
+    transcript: str
+    source: HeardSource
+    #: sarvam: Sarvam-105B read the words. rules: our parser did.
+    reader: Literal["sarvam", "rules"]
+    #: Why our parser read it: voice is offline, or Sarvam-105B gave no usable answer.
+    fallback: Literal["offline", "no_answer"] | None
+    #: udhaar is the only one recorded here. A payment is shown, not recorded (V3).
+    intent: Literal["udhaar", "payment", "unclear"]
+    #: The words that name the person, as the reader quoted them.
+    name: str | None
+    #: Our parser's reading of the amount words. None unless every amount check passed.
+    amount_paise: int | None
+    amount_words: str | None
+    problem: (
+        Literal[
+            "no_amount",
+            "unclear_amount",
+            "amount_not_said",
+            "amount_mismatch",
+            "invented_customer",
+        ]
+        | None
+    )
+    checks: list[CheckOut]
+    readback: ReadbackOut | None
+    who: PickedOut | AskOut = Field(discriminator="kind")
+
+
+class AnswerIn(BaseModel):
+    """His answer to "किसके लिए?", typed."""
+
+    text: str = Field(min_length=1, max_length=200)
+    #: Who the screen offered. Empty: anyone at the counter or in the book.
+    among: list[UUID] = Field(default_factory=list, max_length=60)
+
+
+class AnswerOut(BaseModel):
+    """Who the answer names, or the question again. The amount is the one already
+    heard; nothing is recorded yet."""
+
+    transcript: str
+    source: HeardSource
+    who: PickedOut | AskOut = Field(discriminator="kind")
+
+
+class ClipOut(BaseModel):
+    slug: str
+    label: str
+    shows: str

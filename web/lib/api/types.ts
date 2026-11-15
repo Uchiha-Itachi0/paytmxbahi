@@ -18,3 +18,7 @@ export type Entry = S["EntryOut"];
 export type ScanState = S["ScanOut"];
 export type Joined = S["JoinOut"];
 export type Customer = S["CustomerOut"];
+export type Heard = S["HeardOut"];
+export type Answer = S["AnswerOut"];
+export type HeardPerson = S["PersonOut"];
+export type Clip = S["ClipOut"];

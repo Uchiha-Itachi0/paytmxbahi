@@ -35,6 +35,8 @@ class CustomerRow:
     tag: str | None
     added_at: datetime
     linked_at: datetime | None
+    name_hi: str | None
+    tag_hi: str | None
 
 
 @dataclass(frozen=True, slots=True)

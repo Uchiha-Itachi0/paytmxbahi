@@ -236,10 +236,234 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shops/{shop_id}/heard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Heard Text
+         * @description Words typed or tapped: the same rules as speech, without the recogniser.
+         */
+        post: operations["heard_text_shops__shop_id__heard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shops/{shop_id}/voice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Heard Voice
+         * @description A recording from the shop's mic. 503 when voice is offline and it isn't a
+         *     recording we have heard before; the screen then asks him to type it.
+         *     `before`: what he said before, when this answers "कितने रुपये?".
+         */
+        post: operations["heard_voice_shops__shop_id__voice_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shops/{shop_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Text
+         * @description His answer to "किसके लिए?", typed: who, among `among` (empty: the book).
+         */
+        post: operations["answer_text_shops__shop_id__answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shops/{shop_id}/answer/voice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Voice
+         * @description His answer to "किसके लिए?", spoken. `among`: the customer ids offered,
+         *     comma separated; empty for anyone in the book.
+         */
+        post: operations["answer_voice_shops__shop_id__answer_voice_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/voice/clips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Clips
+         * @description The demo recordings on disk, for playing into /voice with the wifi off.
+         */
+        get: operations["list_clips_voice_clips_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/voice/clips/{slug}.wav": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Clip */
+        get: operations["get_clip_voice_clips__slug__wav_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/voice/say/{paise}.wav": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Say Amount
+         * @description The amount said back in Sarvam's voice. An amount only: this route cannot
+         *     say a name. 503 when voice is offline and it was never spoken; the screen then
+         *     uses the browser's own voice.
+         */
+        get: operations["say_amount_voice_say__paise__wav_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/voice/ask/{question}.wav": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Say Ask
+         * @description "किसके लिए?" (who), "कितने रुपये?" (how_much), "उधार या जमा?" (kind) or
+         *     "फिर से बोलिए।" (again), in Sarvam's voice.
+         */
+        get: operations["say_ask_voice_ask__question__wav_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnswerIn
+         * @description His answer to "किसके लिए?", typed.
+         */
+        AnswerIn: {
+            /** Text */
+            text: string;
+            /** Among */
+            among?: string[];
+        };
+        /**
+         * AnswerOut
+         * @description Who the answer names, or the question again. The amount is the one already
+         *     heard; nothing is recorded yet.
+         */
+        AnswerOut: {
+            /** Transcript */
+            transcript: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "typed" | "sarvam" | "sarvam_cached" | "clip_script";
+            /** Who */
+            who: components["schemas"]["PickedOut"] | components["schemas"]["AskOut"];
+        };
+        /** AskOut */
+        AskOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ask";
+            /**
+             * Why
+             * @enum {string}
+             */
+            why: "who" | "nobody" | "several" | "maybe" | "not_found" | "not_said";
+            /** Among */
+            among: components["schemas"]["PersonOut"][];
+        };
+        /** Body_answer_voice_shops__shop_id__answer_voice_post */
+        Body_answer_voice_shops__shop_id__answer_voice_post: {
+            /** Audio */
+            audio: string;
+            /**
+             * Among
+             * @default
+             */
+            among: string;
+        };
+        /** Body_heard_voice_shops__shop_id__voice_post */
+        Body_heard_voice_shops__shop_id__voice_post: {
+            /** Audio */
+            audio: string;
+            /**
+             * Before
+             * @default
+             */
+            before: string;
+        };
         /** BookOut */
         BookOut: {
             /** Customer Count */
@@ -252,6 +476,30 @@ export interface components {
             outstanding_paise: number;
             /** Lines */
             lines: components["schemas"]["LineOut"][];
+        };
+        /**
+         * CheckOut
+         * @description One check our code made on the reading.
+         */
+        CheckOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "amount_said" | "amount_read" | "person_said" | "person_fits";
+            /** Ok */
+            ok: boolean;
+            /** Says */
+            says: string;
+        };
+        /** ClipOut */
+        ClipOut: {
+            /** Slug */
+            slug: string;
+            /** Label */
+            label: string;
+            /** Shows */
+            shows: string;
         };
         /**
          * CounterOut
@@ -340,6 +588,55 @@ export interface components {
             now: string;
         };
         /**
+         * HeardIn
+         * @description What the shopkeeper said, typed or tapped instead of spoken.
+         */
+        HeardIn: {
+            /** Text */
+            text: string;
+            /** Before */
+            before?: string | null;
+        };
+        /**
+         * HeardOut
+         * @description What was heard, what read it, and what our checks made of it. Nothing is
+         *     recorded yet.
+         */
+        HeardOut: {
+            /** Transcript */
+            transcript: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "typed" | "sarvam" | "sarvam_cached" | "clip_script";
+            /**
+             * Reader
+             * @enum {string}
+             */
+            reader: "sarvam" | "rules";
+            /** Fallback */
+            fallback: ("offline" | "no_answer") | null;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "udhaar" | "payment" | "unclear";
+            /** Name */
+            name: string | null;
+            /** Amount Paise */
+            amount_paise: number | null;
+            /** Amount Words */
+            amount_words: string | null;
+            /** Problem */
+            problem: ("no_amount" | "unclear_amount" | "amount_not_said" | "amount_mismatch" | "invented_customer") | null;
+            /** Checks */
+            checks: components["schemas"]["CheckOut"][];
+            readback: components["schemas"]["ReadbackOut"] | null;
+            /** Who */
+            who: components["schemas"]["PickedOut"] | components["schemas"]["AskOut"];
+        };
+        /**
          * JoinIn
          * @description He scanned the udhaar QR. A first-timer tells us the name to use.
          */
@@ -393,6 +690,41 @@ export interface components {
              * Format: uuid
              */
             person_id: string;
+        };
+        /** PersonOut */
+        PersonOut: {
+            /** Customer Id */
+            customer_id: string;
+            /** Display Name */
+            display_name: string;
+            /** Tag */
+            tag: string | null;
+            /** Scan Id */
+            scan_id: string | null;
+        };
+        /** PickedOut */
+        PickedOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "picked";
+            /**
+             * How
+             * @enum {string}
+             */
+            how: "only_one" | "at_counter" | "in_book";
+            person: components["schemas"]["PersonOut"];
+        };
+        /**
+         * ReadbackOut
+         * @description The amount said back. Never a name: the Soundbox says only the amount.
+         */
+        ReadbackOut: {
+            /** Roman */
+            roman: string;
+            /** Devanagari */
+            devanagari: string;
         };
         /**
          * RecordIn
@@ -859,6 +1191,253 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EntryOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heard_text_shops__shop_id__heard_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shop_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeardIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heard_voice_shops__shop_id__voice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shop_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_heard_voice_shops__shop_id__voice_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_text_shops__shop_id__answer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shop_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_voice_shops__shop_id__answer_voice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shop_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_answer_voice_shops__shop_id__answer_voice_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_clips_voice_clips_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClipOut"][];
+                };
+            };
+        };
+    };
+    get_clip_voice_clips__slug__wav_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    say_amount_voice_say__paise__wav_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paise: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    say_ask_voice_ask__question__wav_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

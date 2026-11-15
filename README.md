@@ -97,9 +97,56 @@ make api       the service on :8000
 make web       the surfaces on :3000
 ```
 
-Everything runs with the venue wifi off: speech responses are cached to disk and
-`SARVAM_OFFLINE` defaults on. The deployed build is what a judge's phone reaches
+Everything still runs with the venue wifi off: the demo clips' transcripts are
+cached to disk, and with `SARVAM_OFFLINE` on (the default) our parser reads. The deployed build is what a judge's phone reaches
 over its own mobile data.
+
+## Voice
+
+The shopkeeper says "do sau", or "Anubhav Shukla ko do sau bees" when the
+customer isn't at the counter. Sarvam reads it, and our code checks every rupee:
+
+- Sarvam's `saaras:v4` turns the audio into words, listening out for the names at
+  the counter and in the book.
+- Sarvam-105B reads the words: udhaar or payment, the words that state the amount,
+  and the words that name the person. It picks nobody.
+- `domain/check` holds that reading to the words: the amount words must be in the
+  transcript, and `parse` must read them as the same number (the number recorded
+  is ours, not the model's).
+- `domain/who` decides the person from the words that name or describe him, by
+  sound, in roman and Devanagari. A surname, a room number ("204 wale") or how the
+  shop describes him ("medical wale", "चाय टपरी वाले") picks one; "Anubhav" alone
+  asks "Kaunse Anubhav?"; a weak match is only offered. Which description words
+  tell customers apart comes from the book: a word more than three customers share
+  ("Room", "wing") is never used. No word list is written in the code.
+- `speak` puts the amount into words, and Sarvam's `bulbul:v3` says them back
+  ("दो सौ बीस रुपये", never a name); the entry goes after three seconds unless
+  cancelled, and the customer confirms on his own phone.
+
+Tapping Add udhaar opens the mic straight away, and it stops by itself a second
+after he stops speaking.
+
+Offline, or when Sarvam-105B doesn't answer, `parse` reads the words instead and
+the same checks decide who. Nothing is sent by itself then: the amount and the
+person are filled in, and the shopkeeper taps Send.
+
+```
+make voice-eval  the 1,338-recording test behind slide 4, replayed through today's checker
+make voice       render the demo clips; with SARVAM_API_KEY in api/.env, Sarvam transcribes them
+make voice-list  what the offline cache holds, and where each transcript came from
+make names-hi    the seed's names in Devanagari, from Sarvam (only missing ones)
+```
+
+`make voice-eval` needs no network. On 24 Sep we spoke 42 shopkeeper lines in 12
+voices, quiet, over street noise and with a second customer talking, against a
+test book with 20 customers named Anubhav. With Sarvam-105B and these checks,
+73.4% of entries were right from the words alone, 16.9% took one tap, 7.6% had to
+be said again, and 2.1% would have gone to a phone wrong. Our parser alone, on the
+same transcripts, was wrong 11.1% of the time.
+
+Replayed through today's checker, which also reads the tag, 75.0% are right from
+the words alone and 15.3% take one tap; nothing is graded worse than on the day,
+and the test fails if anything ever is.
 
 ## Data
 
